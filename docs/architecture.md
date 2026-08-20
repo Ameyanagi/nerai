@@ -36,6 +36,12 @@ for the objective equation, callback and Jacobian conventions, termination
 precedence, counters, numerical gates, and issue dependency order. Architectural
 changes to the solver update that contract before implementation.
 
+The [least-squares reference architecture](reference-architecture.md) records
+the pinned upstream study behind that plan, the adopted and rejected design
+choices, private solver-state boundaries, test/benchmark implications, and
+contract corrections that must be reconciled before their dependent issues
+begin.
+
 ## Implemented problem boundary
 
 `LeastSquaresProblem[M: ResidualModel]` owns one concrete, potentially move-only
