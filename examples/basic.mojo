@@ -1,7 +1,6 @@
 from nerai import (
     LeastSquaresProblem,
     ResidualModel,
-    TerminationReason,
     least_squares,
 )
 from std.math import exp
@@ -29,30 +28,8 @@ struct ExponentialDecayModel(Copyable, ResidualModel):
         ]
 
 
-def termination_name(reason: TerminationReason) -> String:
-    if reason == TerminationReason.GRADIENT_TOLERANCE:
-        return "gradient tolerance"
-    if reason == TerminationReason.STEP_TOLERANCE:
-        return "step tolerance"
-    if reason == TerminationReason.COST_TOLERANCE:
-        return "cost tolerance"
-    if reason == TerminationReason.MAX_ITERATIONS:
-        return "maximum iterations"
-    if reason == TerminationReason.MAX_EVALUATIONS:
-        return "maximum residual evaluations"
-    if reason == TerminationReason.NUMERICAL_FAILURE:
-        return "numerical failure"
-    return "unknown"
-
-
 def main() raises:
     var problem = LeastSquaresProblem(ExponentialDecayModel(), [1.5, 0.3])
     var result = least_squares(problem)
 
-    print("amplitude:", result.parameters[0])
-    print("decay rate:", result.parameters[1])
-    print("cost:", result.cost)
-    print("iterations:", result.iterations)
-    print("residual evaluations:", result.residual_evaluations)
-    print("Jacobian evaluations:", result.jacobian_evaluations)
-    print("termination:", termination_name(result.termination))
+    print(result, end="")

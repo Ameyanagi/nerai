@@ -1,12 +1,13 @@
 """Inspectable nonlinear least-squares result values."""
 
 from std.collections import List
+from std.io import Writable, Writer
 from std.utils.numerics import isfinite
 
 from .termination import TerminationReason
 
 
-struct LeastSquaresResult(Copyable):
+struct LeastSquaresResult(Copyable, Equatable, Writable):
     """The last valid solver state and its explicit termination report.
 
     ``cost`` follows Nerai's objective convention and ``optimality`` is the
@@ -48,6 +49,46 @@ struct LeastSquaresResult(Copyable):
     def converged(self) -> Bool:
         """Return whether termination represents successful convergence."""
         return self.termination.is_success()
+
+    def __eq__(self, other: Self) -> Bool:
+        """Return whether every public report field is exactly equal."""
+        if len(self.parameters) != len(other.parameters):
+            return False
+        for index in range(len(self.parameters)):
+            if self.parameters[index] != other.parameters[index]:
+                return False
+        return (
+            self.cost == other.cost
+            and self.optimality == other.optimality
+            and self.iterations == other.iterations
+            and self.residual_evaluations == other.residual_evaluations
+            and self.jacobian_evaluations == other.jacobian_evaluations
+            and self.termination == other.termination
+        )
+
+    def __str__(self) -> String:
+        """Return the stable multiline solver report."""
+        var result = String()
+        self.write_to(result)
+        return result^
+
+    def write_to[W: Writer](self, mut writer: W):
+        """Write the stable multiline solver report with one trailing newline."""
+        writer.write("termination           ", self.termination, "\n")
+        writer.write(
+            "converged             ", "yes" if self.converged() else "no", "\n"
+        )
+        writer.write("cost                  ", self.cost, "\n")
+        writer.write("optimality            ", self.optimality, "\n")
+        writer.write("iterations            ", self.iterations, "\n")
+        writer.write("residual evaluations  ", self.residual_evaluations, "\n")
+        writer.write("jacobian evaluations  ", self.jacobian_evaluations, "\n")
+        for index in range(len(self.parameters)):
+            var label = String("parameters[", index, "]")
+            writer.write(label)
+            for _ in range(label.byte_length(), 22):
+                writer.write(" ")
+            writer.write(self.parameters[index], "\n")
 
     def validate(self) raises:
         """Revalidate public report fields after possible caller mutation."""

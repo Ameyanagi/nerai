@@ -5,4 +5,5 @@ from .options import LeastSquaresOptions
 from .problem import LeastSquaresProblem, ResidualModel
 from .result import LeastSquaresResult
 from .solve import least_squares
+from .statistics import FitReport, FitStatistics, fit_statistics
 from .termination import TerminationReason

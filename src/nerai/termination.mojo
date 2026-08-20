@@ -1,7 +1,9 @@
 """Explicit nonlinear least-squares termination values."""
 
+from std.io import Writable, Writer
 
-struct TerminationReason(Copyable, Equatable, ImplicitlyCopyable):
+
+struct TerminationReason(Copyable, Equatable, ImplicitlyCopyable, Writable):
     """The single reason a solver stopped.
 
     Tolerance reasons are successful convergence. Budget limits preserve a
@@ -22,7 +24,29 @@ struct TerminationReason(Copyable, Equatable, ImplicitlyCopyable):
         self._value = value
 
     def __eq__(self, other: Self) -> Bool:
+        """Return whether two values represent the same termination reason."""
         return self._value == other._value
+
+    def __str__(self) -> String:
+        """Return the stable human-readable termination phrase."""
+        var result = String()
+        self.write_to(result)
+        return result^
+
+    def write_to[W: Writer](self, mut writer: W):
+        """Write the stable human-readable termination phrase."""
+        if self == Self.GRADIENT_TOLERANCE:
+            writer.write("gradient tolerance")
+        elif self == Self.STEP_TOLERANCE:
+            writer.write("step tolerance")
+        elif self == Self.COST_TOLERANCE:
+            writer.write("cost tolerance")
+        elif self == Self.MAX_ITERATIONS:
+            writer.write("max iterations")
+        elif self == Self.MAX_EVALUATIONS:
+            writer.write("max evaluations")
+        else:
+            writer.write("numerical failure")
 
     def is_success(self) -> Bool:
         """Return whether the solver satisfied a convergence tolerance."""

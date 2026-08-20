@@ -18,8 +18,9 @@ from the wider ecosystem.
 `LeastSquaresProblem` owns a statically dispatched, stateful residual model
 behind validated parameters, weights, and options. `least_squares()` solves it
 with the private dense kernel and returns the last valid accepted parameters,
-cost, optimality, evaluation counters, and termination reason. Covariance
-estimation and the release-level numerical corpus remain planned. See the
+cost, optimality, evaluation counters, and termination reason. Post-fit
+covariance and standard-error estimation are available through
+`fit_statistics()`. The release-level numerical corpus remains planned. See the
 [issue-sized v0.1 implementation plan](docs/implementation-plan.md).
 
 Residual models may be move-only. Each standalone evaluation snapshots its
@@ -31,6 +32,18 @@ one dimension for its complete solve.
 On the fixed contaminated-data fixture, Huber and soft-L1 losses keep the fitted
 parameters closer to the generating values than linear loss when one
 observation has a gross outlier.
+
+### Conventions
+
+Cost is the robust objective value including the one-half factor:
+`0.5 * sum(rho-scaled squared weighted residuals)`. For linear loss this is
+exactly `0.5 * sum((w_i * r_i)^2)`. Optimality is the infinity norm of the
+gradient.
+
+Covariance is `(J^T W J)^-1 * reduced_chi_squared`, with degrees of freedom
+`m_effective - n`; this follows SciPy `curve_fit(..., absolute_sigma=False)`
+semantics. Weights multiply residuals once, and inverse-standard-deviation
+weighting therefore uses `w_i = 1 / sigma_i`.
 
 ## Development
 
@@ -54,10 +67,10 @@ The Mojo import is `nerai`. The eventual Conda distribution is
 `mojo-nerai`. Source lives under `src/nerai/`, whose
 `__init__.mojo` defines the package boundary.
 
-The current experimental root exports robust-loss and solver-report values,
-the residual-model, problem, and option contracts, and the `least_squares()`
-solve entry point. These APIs are tested but do not carry a source-compatibility
-promise before the first release.
+The current experimental root exports robust-loss, solver-report, and
+fit-statistic values, the residual-model, problem, and option contracts, and
+the solve and statistics entry points. These APIs are tested but do not carry a
+source-compatibility promise before the first release.
 
 This complete example fits exact observations from
 `y(t) = 2.5 * exp(-0.7 * t)`:
@@ -66,7 +79,6 @@ This complete example fits exact observations from
 from nerai import (
     LeastSquaresProblem,
     ResidualModel,
-    TerminationReason,
     least_squares,
 )
 from std.math import exp
@@ -94,33 +106,11 @@ struct ExponentialDecayModel(Copyable, ResidualModel):
         ]
 
 
-def termination_name(reason: TerminationReason) -> String:
-    if reason == TerminationReason.GRADIENT_TOLERANCE:
-        return "gradient tolerance"
-    if reason == TerminationReason.STEP_TOLERANCE:
-        return "step tolerance"
-    if reason == TerminationReason.COST_TOLERANCE:
-        return "cost tolerance"
-    if reason == TerminationReason.MAX_ITERATIONS:
-        return "maximum iterations"
-    if reason == TerminationReason.MAX_EVALUATIONS:
-        return "maximum residual evaluations"
-    if reason == TerminationReason.NUMERICAL_FAILURE:
-        return "numerical failure"
-    return "unknown"
-
-
 def main() raises:
     var problem = LeastSquaresProblem(ExponentialDecayModel(), [1.5, 0.3])
     var result = least_squares(problem)
 
-    print("amplitude:", result.parameters[0])
-    print("decay rate:", result.parameters[1])
-    print("cost:", result.cost)
-    print("iterations:", result.iterations)
-    print("residual evaluations:", result.residual_evaluations)
-    print("Jacobian evaluations:", result.jacobian_evaluations)
-    print("termination:", termination_name(result.termination))
+    print(result, end="")
 ```
 
 ## Repository map

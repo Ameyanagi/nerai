@@ -139,5 +139,33 @@ def test_mutated_numeric_report_can_be_revalidated() raises:
     assert_false(result.converged())
 
 
+def test_result_equality_compares_complete_public_reports() raises:
+    var first = LeastSquaresResult(
+        [1.0, -2.0],
+        cost=0.125,
+        optimality=0.25,
+        iterations=2,
+        residual_evaluations=5,
+        jacobian_evaluations=2,
+        termination=TerminationReason.GRADIENT_TOLERANCE,
+    )
+    var same = LeastSquaresResult(
+        [1.0, -2.0],
+        cost=0.125,
+        optimality=0.25,
+        iterations=2,
+        residual_evaluations=5,
+        jacobian_evaluations=2,
+        termination=TerminationReason.GRADIENT_TOLERANCE,
+    )
+    assert_true(first == same)
+
+    same.parameters[1] = -3.0
+    assert_false(first == same)
+    same.parameters[1] = -2.0
+    same.termination = TerminationReason.STEP_TOLERANCE
+    assert_true(first != same)
+
+
 def main() raises:
     TestSuite.discover_tests[__functions_in_module()]().run()
