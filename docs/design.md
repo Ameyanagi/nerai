@@ -21,6 +21,43 @@ contracts and sparse dependencies. Generated tables are acceptable when their
 sources, Unicode or data version, licenses, checksums, and deterministic update
 procedure are committed. Consumers must not need the generator toolchain.
 
+For v0.1, Nerai chooses dense unconstrained `Float64` least squares and a small
+private numerical kernel. This keeps callback, loss, termination, and numerical
+failure semantics reviewable before considering an external linear-algebra
+dependency or a broader optimizer family. Exact equations and acceptance gates
+live in the [implementation plan](implementation-plan.md).
+
+Robust costs use loss-specific scaled formulas. Linear and inlier Huber costs
+halve before squaring; Huber outliers use `C * (abs(r) - C / 2)`; soft-L1 uses
+bounded ratios selected by the relative sizes of `abs(r)` and `C`. Thus a
+representable cost does not depend on an unrepresentable normalized square or
+scale square.
+
+## Mojo 1.0 mutation and invariants
+
+Mojo 1.0 does not make an underscore-prefixed struct field private. A caller
+with a mutable value can assign that field directly. Nerai therefore uses total
+representations for finite semantic states:
+
+- `LossKind` uses `Optional[Bool]`, whose three states map exactly to linear,
+  Huber, and soft-L1.
+- `TerminationReason` uses `Bool` times `Optional[Bool]`, whose six states map
+  exactly to the three convergence reasons, two budget limits, and numerical
+  failure.
+
+Integer discriminants and unchecked constructor flags are excluded. Direct
+field mutation can select another documented state but cannot create an unknown
+loss or termination reason.
+
+`LossEvaluation` and `LeastSquaresResult` are mutable numeric snapshots. Their
+floating-point and collection fields cannot encode finiteness or cross-field
+relationships in their storage types. `LeastSquaresResult` validates its
+constructor inputs and provides `validate()` for callers that mutate a report.
+Its only query, `converged()`, depends solely on the total termination value.
+`LossEvaluation` has no operation that consumes its mutable fields. Future APIs
+that accept either snapshot must revalidate every numeric and shape invariant at
+their boundary.
+
 ## Out of scope
 
 Interpolation, plotting, domain-specific models, automatic differentiation, global optimization, and a broad minimizer catalog are outside v0.1.

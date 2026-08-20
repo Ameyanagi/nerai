@@ -1,1 +1,5 @@
-# Public exports will be added with the first implemented and tested API.
+"""Optimization and nonlinear least-squares foundations for Mojo."""
+
+from .loss import LossEvaluation, LossKind, evaluate_loss, robust_cost
+from .result import LeastSquaresResult
+from .termination import TerminationReason

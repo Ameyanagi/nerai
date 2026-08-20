@@ -28,3 +28,10 @@ explicit typed values, produce deterministic outputs for deterministic inputs,
 and report invalid state rather than silently replacing it with a default.
 I/O, clocks, randomness, terminal queries, filesystem access, and accelerator
 selection stay at explicit effect or backend boundaries.
+
+## v0.1 solver boundary
+
+The [v0.1 implementation plan](implementation-plan.md) is the source of truth
+for the objective equation, callback and Jacobian conventions, termination
+precedence, counters, numerical gates, and issue dependency order. Architectural
+changes to the solver update that contract before implementation.

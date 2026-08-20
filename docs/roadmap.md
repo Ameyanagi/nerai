@@ -2,10 +2,14 @@
 
 ## v0.1 — Foundation
 
-- implement Levenberg-Marquardt, finite-difference Jacobians, weighted residuals, robust losses, covariance estimates, and explicit termination reporting.
-- Define the smallest useful public API and its invariants.
-- Add unit, reference-value, and property/invariant coverage.
-- Build and test the precompiled package on supported targets.
+- Ship dense unconstrained `Float64` nonlinear least squares with
+  Levenberg-Marquardt.
+- Support forward finite-difference Jacobians, observation weights, linear,
+  Huber, and soft-L1 losses, and full-rank covariance estimates.
+- Report termination, cost, optimality, iterations, and callback counts through
+  explicit values.
+- Pass the unit, reference, invariant, end-to-end, package, and installed-artifact
+  gates in the [v0.1 implementation plan](implementation-plan.md).
 
 ## v0.2 — Usability
 
@@ -28,4 +32,7 @@
 
 ## Not planned
 
-Interpolation, plotting, domain-specific models, automatic differentiation, global optimization, and a broad minimizer catalog are outside v0.1.
+Bounds, sparse systems, automatic differentiation, general minimizers, global
+optimization, GPU backends, plotting, interpolation, and domain-specific models
+are outside v0.1. The complete boundary is maintained in the
+[implementation plan](implementation-plan.md#v01-non-goals).
