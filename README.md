@@ -10,8 +10,16 @@ Nerai begins with explicit, inspectable nonlinear least-squares contracts
 instead of attempting a broad SciPy.optimize clone.
 
 The implemented core is intentionally narrow: dense `Float64`
-Levenberg-Marquardt, forward finite-difference Jacobians, observation weights,
-linear, Huber, and soft-L1 losses, and explicit termination reporting.
+Levenberg-Marquardt, forward or central finite-difference Jacobians,
+observation weights, linear, Huber, and soft-L1 losses, and explicit
+termination reporting. Central differences cost `2n` residual evaluations per
+Jacobian instead of forward differences' `n`.
+
+Explicit positive `x_scale` values condition the LM system for parameters with
+different natural magnitudes; there is no automatic Jacobian-derived mode.
+Optional box bounds use one strictly feasible projected-LM strategy and report
+active limits with a SciPy `active_mask`-style `-1`, `0`, or `+1` per parameter.
+Outward-active coordinates are held while tangent coordinates finish converging.
 The project is independently installable and does not require any application
 from the wider ecosystem.
 

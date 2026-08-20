@@ -8,6 +8,7 @@ from std.testing import (
 from std.utils.numerics import inf, nan
 
 from nerai import (
+    JacobianScheme,
     LeastSquaresOptions,
     LeastSquaresProblem,
     LossKind,
@@ -140,6 +141,8 @@ def test_options_defaults_and_disabled_tolerances() raises:
     assert_equal(defaults.min_damping, 1.0e-15)
     assert_equal(defaults.max_damping, 1.0e15)
     assert_false(defaults.finite_difference_step)
+    assert_false(defaults.x_scale)
+    assert_true(defaults.jacobian_scheme == JacobianScheme.FORWARD)
 
     var disabled = LeastSquaresOptions(
         loss=LossKind.SOFT_L1,
@@ -172,6 +175,14 @@ def test_options_reject_invalid_scale_tolerances_and_step() raises:
         _ = LeastSquaresOptions(finite_difference_step=0.0)
     with assert_raises():
         _ = LeastSquaresOptions(finite_difference_step=inf[DType.float64]())
+    with assert_raises(contains="x_scale[0]"):
+        _ = LeastSquaresOptions(x_scale=Optional[List[Float64]]([0.0]))
+    with assert_raises(contains="x_scale[1]"):
+        _ = LeastSquaresOptions(x_scale=Optional[List[Float64]]([1.0, -2.0]))
+    with assert_raises(contains="x_scale[0]"):
+        _ = LeastSquaresOptions(x_scale=Optional[List[Float64]]([inf[DType.float64]()]))
+    with assert_raises(contains="x_scale[0]"):
+        _ = LeastSquaresOptions(x_scale=Optional[List[Float64]]([nan[DType.float64]()]))
 
 
 def test_options_reject_invalid_budgets_and_damping() raises:
@@ -257,6 +268,14 @@ def test_problem_rejects_invalid_dimensions_and_parameters() raises:
         _ = LeastSquaresProblem(AffineModel(), [1.0, nan[DType.float64]()])
     with assert_raises():
         _ = LeastSquaresProblem(OneResidualModel(), [1.0, 2.0])
+    with assert_raises(contains="x_scale has 3 entries for 2 parameters"):
+        _ = LeastSquaresProblem(
+            AffineModel(),
+            [1.0, 2.0],
+            options=LeastSquaresOptions(
+                x_scale=Optional[List[Float64]]([1.0, 2.0, 3.0])
+            ),
+        )
 
     var problem = LeastSquaresProblem(AffineModel(), [1.0, 2.0])
     with assert_raises():

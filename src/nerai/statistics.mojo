@@ -5,9 +5,14 @@ from std.io import Writable, Writer
 from std.math import floor, log10, sqrt
 from std.utils.numerics import isfinite
 
-from ._jacobian import _DEFAULT_RELATIVE_STEP, _forward_difference_jacobian
-from ._kernel import _jt_j, _solve_spd
+from ._jacobian import (
+    _DEFAULT_RELATIVE_STEP,
+    _central_difference_jacobian,
+    _forward_difference_jacobian,
+)
+from ._kernel import _DenseMatrix, _jt_j, _solve_spd
 from ._objective import _build_objective_model
+from .options import JacobianScheme
 from .problem import LeastSquaresProblem, ResidualModel
 from .result import LeastSquaresResult
 
@@ -27,7 +32,8 @@ struct FitStatistics(Copyable, Equatable, Writable):
     ``(J^T W J)^-1 * reduced_chi_squared`` for the effective row weighting.
     With unit weights and linear loss this is exactly SciPy
     ``curve_fit(..., absolute_sigma=False)`` covariance. Computing statistics
-    re-evaluates the model ``n + 1`` times at the result parameters; those
+    re-evaluates the model ``n + 1`` times with forward differences or
+    ``2n + 1`` times with central differences at the result parameters; those
     callbacks are outside every solver evaluation budget.
     """
 
@@ -177,13 +183,13 @@ def fit_statistics[
 ) raises -> FitStatistics:
     """Re-evaluate a fitted problem and estimate parameter uncertainty.
 
-    Convention: One residual vector and one forward-difference Jacobian are
-    evaluated at ``result.parameters`` using the problem's configured finite
-    difference step. The resulting loss-scaled weighted objective model defines
+    Convention: One residual vector and one configured numerical Jacobian are
+    evaluated at ``result.parameters`` using the problem's finite-difference
+    step. The resulting loss-scaled weighted objective model defines
     ``reduced_chi_squared = sum(model_residual_i^2) / (m_effective - n)`` and
-    ``covariance = (J^T W J)^-1 * reduced_chi_squared``. Unit weights with linear
-    loss match SciPy ``curve_fit(..., absolute_sigma=False)``. These ``n + 1``
-    callbacks are diagnostic work outside every solver evaluation budget.
+    ``covariance = (J^T W J)^-1 * reduced_chi_squared``. Unit weights with
+    linear loss match SciPy ``curve_fit(..., absolute_sigma=False)``. These
+    diagnostic callbacks are outside every solver evaluation budget.
 
     Raises:
         Error: If dimensions mismatch, degrees of freedom are not positive, the
@@ -206,13 +212,23 @@ def fit_statistics[
     var relative_step = _DEFAULT_RELATIVE_STEP
     if problem.options.finite_difference_step:
         relative_step = problem.options.finite_difference_step.value()
-    var raw_jacobian = _forward_difference_jacobian(
-        problem.model,
-        result.parameters,
-        raw_residuals,
-        diagnostic_evaluations,
-        relative_step=relative_step,
-    )
+    var raw_jacobian: _DenseMatrix
+    if problem.options.jacobian_scheme == JacobianScheme.CENTRAL:
+        raw_jacobian = _central_difference_jacobian(
+            problem.model,
+            result.parameters,
+            raw_residuals,
+            diagnostic_evaluations,
+            relative_step=relative_step,
+        )
+    else:
+        raw_jacobian = _forward_difference_jacobian(
+            problem.model,
+            result.parameters,
+            raw_residuals,
+            diagnostic_evaluations,
+            relative_step=relative_step,
+        )
     var objective = _build_objective_model(
         raw_residuals,
         raw_jacobian,

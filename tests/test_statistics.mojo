@@ -1,6 +1,8 @@
 from nerai import (
     FitReport,
     FitStatistics,
+    JacobianScheme,
+    LeastSquaresOptions,
     LeastSquaresProblem,
     LeastSquaresResult,
     ResidualModel,
@@ -172,6 +174,21 @@ def test_statistics_match_scipy_curve_fit_fixture() raises:
         / (statistics.standard_error(0) * statistics.standard_error(1))
     )
     assert_true(abs(statistics.correlation(0, 0) - 1.0) <= 1.0e-12)
+
+
+def test_central_scheme_matches_fixture_with_more_residual_calls() raises:
+    var forward_problem = LeastSquaresProblem(ScipyDecayModel(), [1.0, 1.0])
+    var central_problem = LeastSquaresProblem(
+        ScipyDecayModel(),
+        [1.0, 1.0],
+        options=LeastSquaresOptions(jacobian_scheme=JacobianScheme.CENTRAL),
+    )
+    var forward = least_squares(forward_problem)
+    var central = least_squares(central_problem)
+
+    assert_true(abs(forward.parameters[0] - central.parameters[0]) <= 1.0e-8)
+    assert_true(abs(forward.parameters[1] - central.parameters[1]) <= 1.0e-8)
+    assert_true(central.residual_evaluations > forward.residual_evaluations)
 
 
 def test_nonpositive_degrees_of_freedom_teaches_the_remedy() raises:

@@ -1,5 +1,6 @@
 from nerai import ResidualModel
 from nerai._jacobian import (
+    _central_difference_jacobian,
     _forward_difference_jacobian,
     _forward_difference_jacobian_without_base,
 )
@@ -49,6 +50,17 @@ struct QuadraticModel(Copyable, ResidualModel):
 
     def residuals(mut self, parameters: List[Float64]) raises -> List[Float64]:
         return [parameters[0] * parameters[0], parameters[1] * parameters[1]]
+
+
+struct CubicModel(Copyable, ResidualModel):
+    def __init__(out self):
+        pass
+
+    def residual_count(self) -> Int:
+        return 1
+
+    def residuals(mut self, parameters: List[Float64]) raises -> List[Float64]:
+        return [parameters[0] * parameters[0] * parameters[0] - 8.0]
 
 
 struct CoupledNonlinearModel(Copyable, ResidualModel):
@@ -192,6 +204,31 @@ def test_coupled_nonlinear_jacobian_meets_numerical_gate() raises:
     assert_jacobian_gate(jacobian.get(0, 1), cos(x * y) * x)
     assert_jacobian_gate(jacobian.get(1, 0), exp(x) + y * y)
     assert_jacobian_gate(jacobian.get(1, 1), 2.0 * x * y)
+
+
+def test_central_difference_is_more_accurate_for_a_cubic() raises:
+    var forward_model = CubicModel()
+    var central_model = CubicModel()
+    var forward_evaluations = 0
+    var central_evaluations = 0
+    var forward = _forward_difference_jacobian(
+        forward_model,
+        [2.0],
+        [0.0],
+        forward_evaluations,
+        relative_step=1.0e-3,
+    )
+    var central = _central_difference_jacobian(
+        central_model,
+        [2.0],
+        [0.0],
+        central_evaluations,
+        relative_step=1.0e-3,
+    )
+
+    assert_true(abs(central.get(0, 0) - 12.0) < abs(forward.get(0, 0) - 12.0))
+    assert_equal(forward_evaluations, 1)
+    assert_equal(central_evaluations, 2)
 
 
 def test_without_base_accounts_for_n_plus_one_calls() raises:

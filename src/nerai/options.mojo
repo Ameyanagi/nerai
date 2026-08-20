@@ -6,15 +6,39 @@ from std.utils.numerics import isfinite
 from .loss import LossKind
 
 
+struct JacobianScheme(Copyable, Equatable, ImplicitlyCopyable):
+    """Nominal selection of a numerical Jacobian scheme."""
+
+    comptime FORWARD = JacobianScheme(0)
+    comptime CENTRAL = JacobianScheme(1)
+
+    var _value: Int
+
+    def __init__(out self, value: Int):
+        self._value = value
+
+    def __eq__(self, other: Self) -> Bool:
+        """Return whether two values select the same Jacobian scheme."""
+        return self._value == other._value
+
+
 struct LeastSquaresOptions(Copyable):
     """Shared nonlinear least-squares configuration.
 
     A tolerance set to ``None`` is disabled. Present tolerances, the loss
     scale, damping values, and an explicit finite-difference step must be
-    finite and positive. Evaluation and iteration budgets are positive
-    counts. The current release deliberately leaves the relationship between
-    those budgets to a solver because numerical-Jacobian policies are not yet
-    part of the public API.
+    finite and positive. Evaluation and iteration budgets are positive counts.
+
+    ``x_scale`` is an optional explicit positive scale per parameter; ``None``
+    leaves the LM system unscaled. There is deliberately no automatic ``'jac'``
+    mode. Scaling acts on the LM system, while ``optimality`` remains the
+    unscaled gradient infinity norm and ``xtol`` compares the unscaled step to
+    unscaled parameters. The latter deliberately differs from SciPy's scaled
+    ``xtol`` test.
+
+    ``jacobian_scheme`` defaults to forward differences. Central differences
+    use two residual evaluations per parameter, or ``2n`` calls per Jacobian,
+    while forward differences use ``n``.
 
     Fields remain writable under Mojo's value semantics. Constructors and
     problem evaluation boundaries call ``validate()`` so a mutated invalid
@@ -32,6 +56,8 @@ struct LeastSquaresOptions(Copyable):
     var min_damping: Float64
     var max_damping: Float64
     var finite_difference_step: Optional[Float64]
+    var x_scale: Optional[List[Float64]]
+    var jacobian_scheme: JacobianScheme
 
     def __init__(
         out self,
@@ -47,6 +73,8 @@ struct LeastSquaresOptions(Copyable):
         min_damping: Float64 = 1.0e-15,
         max_damping: Float64 = 1.0e15,
         finite_difference_step: Optional[Float64] = None,
+        x_scale: Optional[List[Float64]] = None,
+        jacobian_scheme: JacobianScheme = JacobianScheme.FORWARD,
     ) raises:
         self.loss = loss
         self.loss_scale = loss_scale
@@ -59,6 +87,8 @@ struct LeastSquaresOptions(Copyable):
         self.min_damping = min_damping
         self.max_damping = max_damping
         self.finite_difference_step = finite_difference_step.copy()
+        self.x_scale = x_scale.copy()
+        self.jacobian_scheme = jacobian_scheme
         self.validate()
 
     def validate(self) raises:
@@ -72,6 +102,18 @@ struct LeastSquaresOptions(Copyable):
         _validate_optional_positive(
             self.finite_difference_step, "finite-difference step"
         )
+        if self.x_scale:
+            var x_scale = self.x_scale.value().copy()
+            for index in range(len(x_scale)):
+                if not isfinite(x_scale[index]) or x_scale[index] <= 0.0:
+                    raise Error(
+                        String(
+                            "x_scale[",
+                            index,
+                            "] must be finite and positive; got ",
+                            x_scale[index],
+                        )
+                    )
 
         if self.max_iterations <= 0:
             raise Error("maximum iterations must be positive")

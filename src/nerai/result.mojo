@@ -1,6 +1,6 @@
 """Inspectable nonlinear least-squares result values."""
 
-from std.collections import List
+from std.collections import List, Optional
 from std.io import Writable, Writer
 from std.utils.numerics import isfinite
 
@@ -15,7 +15,9 @@ struct LeastSquaresResult(Copyable, Equatable, Writable):
     callback calls, including calls used for numerical Jacobians. Every result
     includes the initial residual evaluation, so completed iterations cannot
     exceed ``residual_evaluations - 1``. Jacobian evaluations cannot exceed
-    residual evaluations.
+    residual evaluations. ``active_bounds`` follows SciPy's active-mask
+    convention: ``-1`` is lower-active, ``0`` is free, and ``1`` is
+    upper-active.
     """
 
     var parameters: List[Float64]
@@ -25,6 +27,7 @@ struct LeastSquaresResult(Copyable, Equatable, Writable):
     var residual_evaluations: Int
     var jacobian_evaluations: Int
     var termination: TerminationReason
+    var active_bounds: List[Int]
 
     def __init__(
         out self,
@@ -36,6 +39,7 @@ struct LeastSquaresResult(Copyable, Equatable, Writable):
         residual_evaluations: Int,
         jacobian_evaluations: Int,
         termination: TerminationReason,
+        active_bounds: Optional[List[Int]] = None,
     ) raises:
         self.parameters = parameters.copy()
         self.cost = cost
@@ -44,6 +48,10 @@ struct LeastSquaresResult(Copyable, Equatable, Writable):
         self.residual_evaluations = residual_evaluations
         self.jacobian_evaluations = jacobian_evaluations
         self.termination = termination
+        if active_bounds:
+            self.active_bounds = active_bounds.value().copy()
+        else:
+            self.active_bounds = List[Int](length=len(parameters), fill=0)
         self.validate()
 
     def converged(self) -> Bool:
@@ -52,10 +60,15 @@ struct LeastSquaresResult(Copyable, Equatable, Writable):
 
     def __eq__(self, other: Self) -> Bool:
         """Return whether every public report field is exactly equal."""
-        if len(self.parameters) != len(other.parameters):
+        if len(self.parameters) != len(other.parameters) or len(
+            self.active_bounds
+        ) != len(other.active_bounds):
             return False
         for index in range(len(self.parameters)):
-            if self.parameters[index] != other.parameters[index]:
+            if (
+                self.parameters[index] != other.parameters[index]
+                or self.active_bounds[index] != other.active_bounds[index]
+            ):
                 return False
         return (
             self.cost == other.cost
@@ -89,6 +102,17 @@ struct LeastSquaresResult(Copyable, Equatable, Writable):
             for _ in range(label.byte_length(), 22):
                 writer.write(" ")
             writer.write(self.parameters[index], "\n")
+        for index in range(len(self.active_bounds)):
+            if self.active_bounds[index] == 0:
+                continue
+            var label = String("active bounds[", index, "]")
+            writer.write(label)
+            for _ in range(label.byte_length(), 22):
+                writer.write(" ")
+            if self.active_bounds[index] < 0:
+                writer.write("lower\n")
+            else:
+                writer.write("upper\n")
 
     def validate(self) raises:
         """Revalidate public report fields after possible caller mutation."""
@@ -97,6 +121,26 @@ struct LeastSquaresResult(Copyable, Equatable, Writable):
         for index in range(len(self.parameters)):
             if not isfinite(self.parameters[index]):
                 raise Error("result parameters must be finite")
+        if len(self.active_bounds) != len(self.parameters):
+            raise Error(
+                String(
+                    "active_bounds has ",
+                    len(self.active_bounds),
+                    " entries for ",
+                    len(self.parameters),
+                    " parameters",
+                )
+            )
+        for index in range(len(self.active_bounds)):
+            if self.active_bounds[index] < -1 or self.active_bounds[index] > 1:
+                raise Error(
+                    String(
+                        "active_bounds[",
+                        index,
+                        "] must be -1, 0, or 1; got ",
+                        self.active_bounds[index],
+                    )
+                )
         if not isfinite(self.cost) or self.cost < 0.0:
             raise Error("result cost must be finite and non-negative")
         if not isfinite(self.optimality) or self.optimality < 0.0:

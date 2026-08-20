@@ -1,4 +1,5 @@
 from nerai import (
+    JacobianScheme,
     LeastSquaresOptions,
     LeastSquaresProblem,
     LossKind,
@@ -137,6 +138,23 @@ struct DriftingSolveModel(Copyable, ResidualModel):
         return [parameters[0], parameters[1]]
 
 
+struct ScaledDecayModel(Copyable, ResidualModel):
+    def __init__(out self):
+        pass
+
+    def residual_count(self) -> Int:
+        return 11
+
+    def residuals(mut self, parameters: List[Float64]) raises -> List[Float64]:
+        var residuals = List[Float64](length=11, fill=0.0)
+        for index in range(11):
+            var t = 200.0 * Float64(index)
+            residuals[index] = parameters[0] * exp(-parameters[1] * t) - 2.5e6 * exp(
+                -1.0e-3 * t
+            )
+        return residuals^
+
+
 def tight_options(
     *, loss: LossKind = LossKind.LINEAR, loss_scale: Float64 = 1.0
 ) raises -> LeastSquaresOptions:
@@ -213,6 +231,18 @@ def test_clean_exponential_decay_recovers_generating_parameters() raises:
     assert_equal(problem.model.calls, result.residual_evaluations)
 
 
+def test_explicit_x_scale_handles_widely_separated_parameter_scales() raises:
+    var problem = LeastSquaresProblem(
+        ScaledDecayModel(),
+        [1.0e6, 5.0e-3],
+        options=LeastSquaresOptions(x_scale=Optional[List[Float64]]([1.0e6, 1.0e-3])),
+    )
+    var result = least_squares(problem)
+
+    assert_true(abs(result.parameters[0] / 2.5e6 - 1.0) <= 1.0e-6)
+    assert_true(abs(result.parameters[1] / 1.0e-3 - 1.0) <= 1.0e-6)
+
+
 def test_robust_losses_reduce_one_outlier_parameter_error() raises:
     # C=0.1 is small relative to the single +4 observation corruption but
     # leaves the exact clean residuals in the quadratic neighborhood.
@@ -277,6 +307,24 @@ def test_termination_reasons_and_rejected_state_preservation() raises:
     assert_equal(evaluation_limit.residual_evaluations, 1)
     assert_equal(evaluation_limit.jacobian_evaluations, 0)
     assert_equal(evaluation_problem.model.calls, 1)
+
+    # Central differences need two calls per column. The initial residual fits
+    # this budget, but the complete one-column central Jacobian does not.
+    var central_evaluation_problem = LeastSquaresProblem(
+        OneParameterLinearModel(),
+        [0.0],
+        options=LeastSquaresOptions(
+            jacobian_scheme=JacobianScheme.CENTRAL,
+            max_residual_evaluations=2,
+        ),
+    )
+    var central_evaluation_limit = least_squares(central_evaluation_problem)
+    assert_true(
+        central_evaluation_limit.termination == TerminationReason.MAX_EVALUATIONS
+    )
+    assert_equal(central_evaluation_limit.residual_evaluations, 1)
+    assert_equal(central_evaluation_limit.jacobian_evaluations, 0)
+    assert_equal(central_evaluation_problem.model.calls, 1)
 
     # At x=0.1 for r=x^2-1, the first Gauss-Newton proposal overshoots and
     # raises the cost. A one-iteration budget exposes rejected-state retention.

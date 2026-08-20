@@ -3,6 +3,7 @@
 from std.collections import Optional
 from std.utils.numerics import isfinite
 
+from .bounds import Bounds
 from .options import LeastSquaresOptions
 
 
@@ -32,9 +33,11 @@ struct LeastSquaresProblem[M: ResidualModel](Movable):
 
     The residual count must be at least the number of parameters. Weights are
     finite and non-negative with at least one positive entry; omitting weights
-    creates one unit weight per residual. Public fields support ordinary Mojo
-    value use, and every evaluation revalidates them before invoking the model.
-    Coherent direct mutation is explicit reconfiguration between evaluations.
+    creates one unit weight per residual. Optional box bounds must match the
+    parameter count, and initial parameters must be strictly inside them.
+    Public fields support ordinary Mojo value use, and every evaluation
+    revalidates them before invoking the model. Coherent direct mutation is
+    explicit reconfiguration between evaluations.
     """
 
     var model: Self.M
@@ -42,6 +45,7 @@ struct LeastSquaresProblem[M: ResidualModel](Movable):
     var weights: List[Float64]
     var residual_count: Int
     var options: LeastSquaresOptions
+    var bounds: Optional[Bounds]
 
     def __init__(
         out self,
@@ -49,12 +53,14 @@ struct LeastSquaresProblem[M: ResidualModel](Movable):
         initial_parameters: List[Float64],
         *,
         options: Optional[LeastSquaresOptions] = None,
+        bounds: Optional[Bounds] = None,
     ) raises:
         self = Self(
             model^,
             initial_parameters,
             _weights=Optional[List[Float64]](None),
             options=options,
+            bounds=bounds,
         )
 
     def __init__(
@@ -64,12 +70,14 @@ struct LeastSquaresProblem[M: ResidualModel](Movable):
         *,
         weights: List[Float64],
         options: Optional[LeastSquaresOptions] = None,
+        bounds: Optional[Bounds] = None,
     ) raises:
         self = Self(
             model^,
             initial_parameters,
             _weights=Optional(weights.copy()),
             options=options,
+            bounds=bounds,
         )
 
     def __init__(
@@ -79,6 +87,7 @@ struct LeastSquaresProblem[M: ResidualModel](Movable):
         *,
         var _weights: Optional[List[Float64]],
         options: Optional[LeastSquaresOptions] = None,
+        bounds: Optional[Bounds] = None,
     ) raises:
         _validate_parameters(initial_parameters)
         var residual_count = model.residual_count()
@@ -95,12 +104,56 @@ struct LeastSquaresProblem[M: ResidualModel](Movable):
             self.options = options.value().copy()
         else:
             self.options = LeastSquaresOptions()
+        self.bounds = bounds.copy()
         self.validate()
 
     def validate(self) raises:
         """Revalidate all reachable problem state without calling the model."""
         self.options.validate()
         _validate_parameters(self.initial_parameters)
+
+        if self.options.x_scale:
+            var x_scale_count = len(self.options.x_scale.value())
+            if x_scale_count != len(self.initial_parameters):
+                raise Error(
+                    String(
+                        "x_scale has ",
+                        x_scale_count,
+                        " entries for ",
+                        len(self.initial_parameters),
+                        " parameters",
+                    )
+                )
+
+        if self.bounds:
+            var bounds = self.bounds.value().copy()
+            bounds.validate()
+            if bounds.parameter_count() != len(self.initial_parameters):
+                raise Error(
+                    String(
+                        "bounds have ",
+                        bounds.parameter_count(),
+                        " parameters for ",
+                        len(self.initial_parameters),
+                        " initial parameters",
+                    )
+                )
+            for index in range(len(self.initial_parameters)):
+                var parameter = self.initial_parameters[index]
+                if parameter <= bounds.lower(index) or parameter >= bounds.upper(index):
+                    raise Error(
+                        String(
+                            "initial parameter[",
+                            index,
+                            "] ",
+                            parameter,
+                            " is not strictly inside bounds [",
+                            bounds.lower(index),
+                            ", ",
+                            bounds.upper(index),
+                            "]",
+                        )
+                    )
 
         if self.residual_count < len(self.initial_parameters):
             raise Error("residual count must be at least the parameter count")
