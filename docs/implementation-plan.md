@@ -175,6 +175,8 @@ solutions; transpose/product identities hold on fixed generated cases; shape
 mismatches and singular pivots are explicit errors; all outputs remain finite
 for the declared fixture range; `pixi run check` passes.
 
+**Status:** implemented in the current working tree.
+
 ### NERAI-004 — Forward finite-difference Jacobian
 
 **Depends on:** NERAI-002 and NERAI-003.
@@ -190,6 +192,8 @@ meet their stated absolute/relative tolerances; constant columns are exactly
 zero; the callback count is `n + 1` when a base residual is not supplied and
 `n` when it is supplied; callback errors, non-finite outputs, and changed shape
 are tested; `pixi run check` passes.
+
+**Status:** implemented in the current working tree.
 
 ### NERAI-005 — Weighted and robust objective model
 
@@ -208,6 +212,8 @@ calculated fixtures; repeated residual sign changes preserve cost; finite-
 difference gradients of the scalar objective agree with the model gradient on
 fixed cases; `pixi run check` passes.
 
+**Status:** implemented in the current working tree.
+
 ### NERAI-006 — Levenberg-Marquardt step
 
 **Depends on:** NERAI-003 and NERAI-005.
@@ -224,6 +230,8 @@ hand calculations; increasing damping monotonically reduces step norm for the
 fixture family; predicted reduction is positive for accepted descent fixtures;
 breakdowns return an explicit internal status; `pixi run check` passes.
 
+**Status:** implemented in the current working tree.
+
 ### NERAI-007 — LM iteration and damping policy
 
 **Depends on:** NERAI-006.
@@ -239,6 +247,8 @@ trials preserve parameters and cost; damping remains finite and within bounds;
 the same input produces identical decisions and counters on repeated runs;
 `pixi run check` passes.
 
+**Status:** implemented in the current working tree.
+
 ### NERAI-008 — Public solve loop and termination
 
 **Depends on:** NERAI-002, NERAI-004, and NERAI-007.
@@ -253,6 +263,8 @@ simultaneous convergence/budget cases follow the documented precedence; no
 callback starts after the evaluation budget is exhausted; result counters equal
 instrumented callback counters; invalid initial state raises while later
 breakdown returns numerical failure; `pixi run check` passes.
+
+**Status:** implemented in the current working tree.
 
 ### NERAI-009 — Covariance estimate
 

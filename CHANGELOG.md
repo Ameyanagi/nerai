@@ -13,3 +13,8 @@ and uses semantic versioning after the first public release.
   solver-option contracts.
 - Entry-snapshotted residual dimensions, explicit between-call problem
   reconfiguration, and positive move-only model coverage.
+- Private row-major dense numerical kernel and forward finite-difference
+  Jacobians with exact residual-evaluation accounting.
+- Weighted linear, Huber, and soft-L1 objective construction for solver steps.
+- Public Levenberg-Marquardt `least_squares()` with deterministic damping,
+  explicit termination, and last-valid-state result reporting.

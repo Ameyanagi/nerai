@@ -33,6 +33,13 @@ bounded ratios selected by the relative sizes of `abs(r)` and `C`. Thus a
 representable cost does not depend on an unrepresentable normalized square or
 scale square.
 
+The implemented `least_squares()` surface validates reachable problem state
+once at solve entry, then evaluates the trusted model directly inside the loop
+while enforcing the captured residual dimension and finite outputs. It builds
+forward-difference Jacobians and the weighted robust objective, applies the LM
+damping policy fixed in the implementation plan, and maps tolerance, budget,
+and numerical-breakdown outcomes to `TerminationReason`.
+
 ## Mojo 1.0 mutation and invariants
 
 Finite semantic states follow the standard-library nominal-enum pattern:
@@ -69,8 +76,8 @@ reach a numerical kernel. Coordinated mutation of the model declaration,
 problem count, and weights into another valid state is explicit problem
 reconfiguration between standalone evaluations or solves; it is not described
 as an impossible lifetime-fixed invariant. Each evaluation enforces its entry
-dimension. The future solver owns the stronger responsibility of capturing a
-solve-entry dimension and rejecting any change until that solve returns.
+dimension. During `least_squares()`, the solver captures the solve-entry
+dimension and rejects any change until the solve returns.
 
 The stateful residual callback uses static generic dispatch and requires only a
 movable model, not a copyable one. `mut self` permits instrumentation and

@@ -14,7 +14,10 @@ install an application, renderer, language layer, or scientific stack.
 
 ## Layers
 
-Planned implementation areas: problem and result contracts, termination, least-squares solvers, Jacobians, covariance, robust losses, and later BFGS/L-BFGS minimizers.
+Implemented areas are problem and result contracts, termination, robust losses,
+the private dense numerical kernel, forward finite-difference Jacobians, and the
+Levenberg-Marquardt solve loop. Covariance estimation and later BFGS/L-BFGS
+minimizers remain planned.
 
 The package root exports only the small documented public surface. Algorithms,
 generated tables, platform details, and backend implementations remain in
@@ -50,10 +53,11 @@ Mojo 1.0 public fields make coherent direct mutation an explicit problem
 reconfiguration between standalone evaluations or before a solve. Each
 evaluation snapshots the validated entry residual count and checks the model's
 declaration again after callback return. A callback cannot change its dimension
-during one call. A future solver must separately capture the solve-entry
-dimension and enforce it for the entire solve, even if the public problem is
-mutated between standalone calls.
+during one call. `least_squares()` separately captures the solve-entry dimension
+and enforces it for the entire solve, even if the public problem was reconfigured
+between standalone calls.
 
 The problem uses Mojo `List[Float64]` values and does not create a public matrix
-or array abstraction. The current public method evaluates residuals only; it
-does not yet calculate a Jacobian, objective, step, or solution.
+or array abstraction. `least_squares()` builds its row-major Jacobian, weighted
+robust objective, and LM state with private implementation values, then returns
+only the documented `LeastSquaresResult`.
