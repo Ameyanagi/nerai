@@ -14,7 +14,9 @@ install an application, renderer, language layer, or scientific stack.
 
 ## Layers
 
-Planned implementation areas: problem and result contracts, termination, least-squares solvers, Jacobians, covariance, robust losses, and later BFGS/L-BFGS minimizers.
+Planned implementation areas: problem and result contracts, termination,
+least-squares solvers, Jacobians, covariance, and robust losses. A general
+minimizer family is outside the project boundary established for v0.1.
 
 The package root exports only the small documented public surface. Algorithms,
 generated tables, platform details, and backend implementations remain in
@@ -51,6 +53,11 @@ raising `mut self` evaluation method, so instrumented or cached models can
 update their own state. Model errors propagate to the caller. Nerai validates
 initial parameters, observation weights, configuration, model-declared shape,
 and every returned residual before later numerical layers receive them.
+For fixed model configuration, repeated calls with the same parameter values
+during a solve must return the same residual values. `mut self` may maintain
+caches or counters, but those mutations must not change the mathematical
+residual mapping. This semantic determinism is a caller obligation because
+Nerai cannot distinguish a cache update from a model reconfiguration.
 
 Mojo 1.0 public fields make coherent direct mutation an explicit problem
 reconfiguration between standalone evaluations or before a solve. Each

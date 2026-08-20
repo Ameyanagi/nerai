@@ -32,6 +32,11 @@ The contract has these consequences:
   Each standalone evaluation snapshots its validated entry dimension and
   rejects a declaration change during that callback. Every returned residual
   is finite.
+- For fixed model configuration, equal parameter values produce equal residual
+  values throughout a solve. `mut self` may update caches and counters only when
+  those changes are observationally irrelevant to the mathematical residual
+  mapping. This semantic-determinism obligation is documented rather than
+  guessed from repeated calls.
 - Coherent direct mutation may explicitly reconfigure a problem between
   standalone evaluations or before a solve. A solver captures the solve-entry
   dimension and rejects changes until that solve returns.
@@ -44,9 +49,13 @@ The contract has these consequences:
   introduce a public universal array type.
 
 Invalid problem configuration, a callback error, a changed residual length, or
-non-finite values at the initial point raise `Error`. A numerical breakdown
-after a valid initial state returns the last valid accepted state with
-`TerminationReason.NUMERICAL_FAILURE`.
+non-finite callback values at any point raise `Error`. Nerai never converts a
+user/model contract violation into solver status. An internal arithmetic
+breakdown after a complete valid accepted state returns that state with
+`TerminationReason.NUMERICAL_FAILURE`; an initial internal breakdown raises
+because no valid result exists yet. A future recoverable domain-invalid model
+outcome requires an explicit typed callback result and is not inferred from
+NaN or infinity.
 
 ## Termination and reporting
 
@@ -59,6 +68,11 @@ The solver checks a newly accepted state in this order:
 5. residual-evaluation budget.
 
 Convergence therefore wins when it occurs on the final allowed evaluation.
+After a rejected trial, the accepted state and its already-checked tolerances
+are unchanged. The solver increments `iterations`, applies the damping update,
+then returns `MAX_ITERATIONS` if that budget is reached before it forms another
+proposal or reserves more residual calls. Otherwise it checks whether the next
+complete trial reservation fits and returns `MAX_EVALUATIONS` if it does not.
 The v0.1 tolerance definitions are:
 
 ```text
@@ -80,7 +94,7 @@ The v0.1 defaults and fixed policy are:
 | Maximum residual evaluations | `1000` |
 | Initial damping | `1e-3` |
 | Damping bounds | `[1e-15, 1e15]` |
-| Damping diagonal | `max((J^T J)[j,j], 1e-15)` |
+| Damping scale | `d_j = ||J[:,j]||_2`; conceptually `D[j,j] = d_j^2` |
 | Accept trial | actual reduction is positive and ratio is greater than zero |
 | Strong trial | ratio greater than `0.75`: divide damping by `3` |
 | Weak trial | ratio below `0.25`: multiply damping by `2` |
@@ -113,6 +127,52 @@ solver returns `MAX_EVALUATIONS` without starting a partial Jacobian.
 `F(x)`, and `optimality` is `||J^T f||_inf`. Tolerance reasons are convergence;
 budget reasons preserve a valid iterate without claiming convergence; numerical
 failure reports an unusable next step while preserving the last valid iterate.
+
+## Fixed dense QR and LM step
+
+For the weighted, robustified model Jacobian `J` and residual `f`, compute
+stable column norms `d_j = ||J[:,j]||_2` and solve
+
+```text
+min_s ||[J; sqrt(lambda) diag(d)] s - [-f; 0]||_2
+```
+
+with private column-pivoted Householder QR. The implementation never forms
+`J^T J`, `lambda * d_j^2`, or an absolute diagonal floor. A zero column is a
+private rank breakdown unless an enabled gradient tolerance has already stopped
+at the accepted state.
+
+Factor `A P = Q R`. Recompute stable trailing column norms after each reflector;
+choose the largest norm and break an exact tie by lowest original column index.
+For nonzero active column `x`, use
+`alpha = -copysign(||x||_2, x[0])`, treating zero `x[0]` as positive. With
+
+```text
+tau = 64 * max(rows, columns) * 2^-52
+```
+
+rank is zero when `R[0,0] == 0`; otherwise diagonal `j` is independent exactly
+when `abs(R[j,j]) / abs(R[0,0]) > tau`. Equality is deficient. The same pivot,
+sign, and relative-rank policy factors final unfloored `J_covariance`.
+Triangular solves require
+
+```text
+||R s_permuted - (Q^T b)[0:n]||_inf
+  <= 128 max(rows, n) epsilon
+     * max(1, ||(Q^T b)[0:n]||_inf, ||R||_inf ||s_permuted||_inf)
+```
+
+using stable norm and product helpers.
+
+For `g = J^T f`, the trial model uses
+
+```text
+predicted_reduction = -(g^T s + 1/2 ||J s||_2^2)
+```
+
+and independently checks the equivalent
+`1/2 * (||sqrt(lambda) * d * s||_2^2 - g^T s)` identity. The damping term
+selects the step but is not part of the user objective.
 
 ## Issue sequence
 
@@ -159,6 +219,8 @@ standalone evaluation enforces its validated entry residual count across the
 callback. `LeastSquaresProblem` and `LeastSquaresOptions` revalidate all
 reachable numeric, shape, weight, and configuration state before residual
 evaluation; coherent between-call mutation is explicit reconfiguration.
+During a solve, cache and counter mutation must preserve identical residual
+values for identical parameters under fixed model configuration.
 
 ### NERAI-003 — Private dense numerical kernel
 
@@ -167,13 +229,17 @@ evaluation; coherent between-call mutation is explicit reconfiguration.
 **Outcome:** the minimum private row-major operations needed by LM, with no
 public array abstraction.
 
-**Scope:** checked matrix shape/indexing; dot products and stable norms;
-`J^T f`; `J^T J`; diagonal damping; symmetric solve with pivot checks.
+**Scope:** checked matrix shape/indexing; dot products, stable norms, `J^T f`,
+and matrix-vector products; deterministic column-pivoted Householder QR for
+rectangular matrices; application of reflectors; checked triangular solves;
+one relative numerical-rank policy. Do not form `J^T J`.
 
-**Complete when:** hand-computed 1x1, 2x2, and 3x3 systems match reference
-solutions; transpose/product identities hold on fixed generated cases; shape
-mismatches and singular pivots are explicit errors; all outputs remain finite
-for the declared fixture range; `pixi run check` passes.
+**Complete when:** hand-computed square and overdetermined systems match
+reference solutions; `A P = Q R`, orthogonality, transpose/product, triangular
+residual, scale, permutation, exact-tie, and rank-threshold identities hold on
+fixed generated cases; shape mismatches and deficient pivots are explicit
+errors; all outputs remain finite for the declared fixture range;
+`pixi run check` passes.
 
 ### NERAI-004 — Forward finite-difference Jacobian
 
@@ -183,7 +249,9 @@ for the declared fixture range; `pixi run check` passes.
 
 **Scope:** forward differences of raw residuals; default
 `h_j = sqrt(epsilon) * max(1, abs(x_j))`; validated user relative step; a
-representable perturbation for every finite parameter; fixed residual shape.
+representable perturbation for every finite parameter; fixed residual shape;
+all callback errors, non-finite values, and dimension violations remain raised
+model/contract errors in initial, trial, and perturbation phases.
 
 **Complete when:** constant, affine, quadratic, and coupled analytic fixtures
 meet their stated absolute/relative tolerances; constant columns are exactly
@@ -215,14 +283,19 @@ fixed cases; `pixi run check` passes.
 **Outcome:** compute a checked LM proposal and its predicted reduction without
 owning iteration policy.
 
-**Scope:** solve `(J^T J + lambda D) step = -J^T f`; scale the diagonal with a
-documented positive floor; calculate predicted reduction; classify singular,
+**Scope:** compute stable positive column scales `d_j = ||J[:,j]||_2`, then
+solve the augmented least-squares problem
+`min ||[J; sqrt(lambda) diag(d)] step - [-f; 0]||_2` with the private pivoted-QR
+kernel. Do not form `J^T J`, `lambda * d_j^2`, or a unit-sensitive absolute
+floor. Calculate predicted reduction from `J * step`; classify deficient,
 non-finite, and non-descent proposals.
 
 **Complete when:** one-dimensional and linear multi-parameter fixtures match
 hand calculations; increasing damping monotonically reduces step norm for the
 fixture family; predicted reduction is positive for accepted descent fixtures;
-breakdowns return an explicit internal status; `pixi run check` passes.
+the QR solution satisfies its triangular residual and the equivalent damping
+identity; zero columns and breakdowns return an explicit internal status;
+`pixi run check` passes.
 
 ### NERAI-007 — LM iteration and damping policy
 
@@ -232,10 +305,13 @@ breakdowns return an explicit internal status; `pixi run check` passes.
 
 **Scope:** actual/predicted reduction ratio; damping increase/decrease bounds;
 accepted-state replacement; rejected-trial preservation; exact iteration and
-callback accounting.
+callback accounting; an explicit `MAX_ITERATIONS` check after every rejected
+trial and before another proposal or budget reservation.
 
 **Complete when:** fixtures exercise accepted and rejected trials; rejected
 trials preserve parameters and cost; damping remains finite and within bounds;
+repeated rejection stops at exactly the iteration budget even when residual
+budget remains; no subsequent proposal or callback begins after that stop;
 the same input produces identical decisions and counters on repeated runs;
 `pixi run check` passes.
 
@@ -246,7 +322,8 @@ the same input produces identical decisions and counters on repeated runs;
 **Outcome:** `least_squares()` returns the explicit report defined above.
 
 **Scope:** initial validation/evaluation; convergence precedence; iteration and
-evaluation budgets; last-valid-state handling; root export and user example.
+evaluation budgets; last-valid-state handling; uniform propagation of every
+callback error/non-finite return; root export and user example.
 
 **Complete when:** each termination reason is reached by a focused fixture;
 simultaneous convergence/budget cases follow the documented precedence; no
@@ -261,14 +338,18 @@ breakdown returns numerical failure; `pixi run check` passes.
 **Outcome:** an opt-in covariance report for a converged, locally full-rank
 solution.
 
-**Scope:** inverse normal matrix; residual variance scaling with documented
-degrees of freedom; weighted/robust model Jacobian convention; explicit
-unavailable reason for rank deficiency or insufficient degrees of freedom.
+**Scope:** inverse local curvature from the final unfloored `J_covariance` QR
+factor using checked triangular solves; residual variance scaling with
+documented degrees of freedom; explicit unavailable reasons for rank deficiency
+or insufficient degrees of freedom; result-level validation of covariance
+dimension, termination, and availability status after public mutation.
 
 **Complete when:** linear-regression fixtures match independently calculated
 covariance values; output is symmetric within tolerance with non-negative
 diagonal; rank-deficient and `m <= n` cases report unavailable instead of
-inventing finite values; `pixi run check` passes.
+inventing finite values; mutation cannot leave an available covariance with a
+non-converged result, a mismatched parameter dimension, or a contradictory
+unavailability reason; `pixi run check` passes.
 
 ### NERAI-010 — End-to-end numerical corpus
 
@@ -313,7 +394,7 @@ The release corpus additionally satisfies these gates:
 | Nonlinear solve | Rosenbrock and curve-fit parameters meet fixture-specific tolerances on every supported target. |
 | Robustness | On the committed outlier fixture, Huber and soft-L1 parameter error are each below linear-loss error. |
 | Accounting | Instrumented callback counts equal every reported counter exactly, including budget boundaries. |
-| Breakdown | Rank loss, overflow, and non-finite trials never produce a converged result or fabricated covariance. |
+| Breakdown | Rank loss and internal overflow never produce a converged result or fabricated covariance; non-finite callback returns always raise. |
 | Determinism | Repeated runs on one target produce the same termination reason, counters, and accepted-state sequence. |
 
 Tolerance values belong beside each fixture, not in a global permissive helper.
@@ -327,7 +408,7 @@ external datasets record source, license, checksum, and generation command in
 - underdetermined systems and rank-deficient pseudoinverse solutions;
 - sparse Jacobians or sparse linear algebra;
 - automatic differentiation and symbolic Jacobians;
-- BFGS, L-BFGS, global optimization, and a general minimizer catalog;
+- local or global general minimizers and an optimizer catalog;
 - complex parameters, mixed precision, SIMD-specific APIs, GPU backends, or FFI;
 - asynchronous callbacks, cancellation hooks, and user-stop callbacks;
 - domain-specific model, dataframe, plotting, interpolation, or file-I/O types.

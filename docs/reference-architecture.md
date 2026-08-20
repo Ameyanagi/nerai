@@ -84,11 +84,11 @@ parameters. Numerically it uses pivoted QR, scale-aware diagonals, a trust
 radius, and an iterated damping solve rather than explicitly inverting `J^T J`.
 
 Nerai adopts a private, least-squares-specific solver state; accepted/trial
-separation; dimension checks at each callback boundary; scale-aware damping;
-and isolated step tests. It rejects model-owned current parameters, mandatory
-analytic Jacobians, `Option`-only callback failures, panic-based option
-validation, its residual-only evaluation count, and returning the model as part
-of the solver result.
+separation; dimension checks at each callback boundary; column-pivoted QR;
+scale-aware damping; and isolated step tests. It rejects model-owned current
+parameters, mandatory analytic Jacobians, `Option`-only callback failures,
+panic-based option validation, its residual-only evaluation count, and
+returning the model as part of the solver result.
 
 ### Ceres Solver
 
@@ -138,10 +138,13 @@ trait ResidualModel(Deinitable, Movable):
 
 The explicit parameter argument is preferable to a `set_params()`/`residuals()`
 pair: a rejected candidate never becomes hidden mutable model state. `mut self`
-still permits counters and caches. `LeastSquaresProblem[M]` owns `M`, initial
-parameters, weights, options, and the captured residual count. A solve takes a
-mutable borrow of the problem so the caller retains its stateful model after
-return:
+still permits counters and caches, but those mutations must not change the
+mathematical residual mapping: for fixed model configuration, equal parameter
+values during one solve must produce equal residual values. Nerai documents
+this semantic-determinism obligation and does not try to detect it by repeating
+arbitrary user work. `LeastSquaresProblem[M]` owns `M`, initial parameters,
+weights, options, and the captured residual count. A solve takes a mutable
+borrow of the problem so the caller retains its stateful model after return:
 
 ```mojo
 def least_squares[M: ResidualModel](
@@ -156,7 +159,11 @@ matrix family.
 At solve entry, validate options, finite parameters and weights, fixed `n >= 1`,
 fixed `m >= n`, and `model.residual_count() == m`. Capture `m` and `n` for the
 entire solve. Each callback must recheck the model declaration, returned
-length, and finite values before numerical code receives them.
+length, and finite values before numerical code receives them. A
+callback-raised error, changed dimension, wrong length, or non-finite returned
+value raises `Error` in every phase. A future recoverable domain-invalid
+evaluation needs an explicit typed callback outcome; it is never inferred from
+NaN or infinity.
 
 ### Jacobian providers
 
@@ -214,9 +221,10 @@ an all-disabled options value may still be constructed and used for standalone
 problem evaluation, but `least_squares()` rejects it before the first callback.
 
 Algorithm policy remains fixed in v0.1 rather than becoming options: forward
-difference, damped normal-equation step, ratio thresholds, termination order,
-and dense `Float64`. This makes identical inputs reproducible and keeps the
-public configuration from outrunning tested implementation choices.
+difference, an augmented column-pivoted-QR LM step, ratio thresholds,
+termination order, and dense `Float64`. This makes identical inputs reproducible
+and keeps the public configuration from outrunning tested implementation
+choices.
 
 ### Result and termination
 
@@ -286,11 +294,12 @@ validate and capture m/n
   -> compute complete raw Jacobian
   -> apply weights/loss to build accepted model
   -> check initial gradient convergence
-  -> form damped step from accepted model
+  -> form augmented pivoted-QR step from accepted model
   -> check enabled step tolerance and positive predicted reduction
   -> evaluate isolated trial residuals
   -> compute and classify actual/predicted reduction
-     -> reject: preserve accepted state, increase/retain damping
+     -> reject: preserve accepted state, increase/retain damping,
+                then stop at the iteration budget before another proposal
      -> accept: compute complete Jacobian and model at trial,
                 then atomically replace accepted state
   -> check tolerances and budgets in documented order
@@ -298,8 +307,9 @@ validate and capture m/n
 
 No pointer or shared reference from `_TrialState` aliases `_AcceptedState`.
 Copying the small parameter vector is preferable to rollback-sensitive model
-mutation. A rejected or non-finite trial must not alter result parameters,
-cost, gradient, or Jacobian.
+mutation. A rejected trial or an internal arithmetic failure while processing a
+finite trial must not alter result parameters, cost, gradient, or Jacobian. A
+trial callback contract violation raises instead of returning a result.
 
 ### Evaluation accounting and reservation
 
@@ -311,14 +321,12 @@ expose a partial count. `jacobian_evaluations` increments only after all
 columns and validations complete. `iterations` increments once a trial
 residual has returned and the trial is classified, accepted or rejected.
 
-During the initial Jacobian, a perturbation callback error or wrong shape raises
-as a callback-contract failure; a non-finite perturbation return raises because
-no complete accepted state exists yet. During the Jacobian for a promising
-trial, callback errors and wrong shapes still raise, while a non-finite
-perturbation return yields `NUMERICAL_FAILURE` and preserves the previous
-accepted state. In every case a returned perturbation vector increments
-`residual_evaluations`, and an incomplete Jacobian does not increment
-`jacobian_evaluations`.
+During every Jacobian, a perturbation callback error, wrong shape, changed
+declaration, or non-finite return raises as a model/callback-contract failure.
+The rule does not change after a complete accepted state exists. Every returned
+perturbation vector increments `residual_evaluations` before validation, and an
+incomplete Jacobian does not increment `jacobian_evaluations`; because the solve
+raises, no partial public report is produced.
 
 The default finite-difference solver must not create an accepted point without
 a matching gradient. Therefore:
@@ -341,78 +349,83 @@ raises before the first callback; without an initial Jacobian, the solver
 cannot construct the valid accepted state required by `LeastSquaresResult`.
 
 Named counters are preferable to argmin's string map. Accepted/rejected counts,
-linear-solve counts, final damping, and trust radius are useful internal test
-diagnostics, but they are not part of the v0.1 public result unless an
-implementation issue demonstrates a stable user need.
+QR-factorization counts, and final damping are useful internal test diagnostics,
+but they are not part of the v0.1 public result unless an implementation issue
+demonstrates a stable user need.
 
 ## LM step, damping, and trial policy
 
-The reference projects show that pivoted QR and trust-radius LM are stronger
-long-term numerical designs than explicit normal-equation inversion. Nerai
-v0.1 nevertheless keeps its already scoped step:
+Nerai adopts one private deterministic column-pivoted Householder QR kernel for
+both LM steps and covariance rank. For model Jacobian `J`, model residual `f`,
+and finite positive damping `lambda`, compute stable column norms
 
 ```text
-(J^T J + lambda D) step = -J^T f
-D[j,j] = max((J^T J)[j,j], 1e-15)
+d_j    = ||J[:,j]||_2
+D[j,j] = d_j^2                         # conceptual; never formed
+A      = [J; sqrt(lambda) diag(d)]
+b      = [-f; 0]
 ```
 
-Let `B = J^T J`, `g = J^T f`, and let the checked solve return `s`. The trial and
+and solve `min_s ||A s - b||_2`. A zero `d_j` leaves an unidentifiable column
+and is a typed private rank breakdown unless an enabled gradient tolerance has
+already stopped at the accepted state. This deliberately rejects an arbitrary
+unit-valued fallback for a zero column. Form the damping row as
+`sqrt(lambda) * d_j` with checked arithmetic; do not form `lambda * d_j^2`,
+`J^T J`, or an absolute diagonal floor.
+
+The QR factorization is `A P = Q R`. At each column, choose the largest stable
+remaining column norm; break an exact tie by the lowest original column index.
+Apply Householder reflectors to the matrix and right-hand side and recompute
+candidate column norms after each reflector rather than relying on an unstable
+downdate. For a nonzero active column `x`, use the deterministic stable sign
+choice `alpha = -copysign(||x||_2, x[0])`, treating zero `x[0]` as positive for
+the sign choice. Every reflector, factor, transformed right-hand-side entry,
+and solution entry must remain finite.
+
+For a factor with `k = min(rows, columns)`, define
+
+```text
+tau = 64 * max(rows, columns) * 2^-52
+```
+
+The factor has numerical rank zero when `R[0,0] == 0`; otherwise diagonal `j`
+is independent exactly when `abs(R[j,j]) / abs(R[0,0]) > tau`, using sequential
+division and the pivot order above. Equality is rank deficient. This single
+relative policy governs an undamped covariance factor and detects an unexpected
+deficiency of the augmented LM factor. It is scale-relative and has no absolute
+parameter-unit boundary. The triangular solution must also satisfy
+
+```text
+||R s_permuted - (Q^T b)[0:n]||_inf
+  <= 128 max(rows, n) epsilon
+     * max(1, ||(Q^T b)[0:n]||_inf, ||R||_inf ||s_permuted||_inf)
+```
+
+with stable norm/product helpers.
+
+Let `g = J^T f`, and let the checked augmented solve return `s`. The trial and
 reduction equations are fixed as:
 
 ```text
 x_trial             = x + s
 actual_reduction    = F(x) - F(x_trial)
-predicted_reduction = -(g^T s + 1/2 s^T B s)
+predicted_reduction = -(g^T s + 1/2 ||J s||_2^2)
 ratio               = actual_reduction / predicted_reduction
 ```
 
 The prediction is the reduction in the undamped local least-squares model; the
 damping term chooses the step but is not counted as objective value. For an
-accurate linear solve, `predicted_reduction` also equals
-`1/2 s^T (lambda D s - g)`; tests use that identity as a solve check, not as a
-second definition. Dot products use the stable private accumulator.
+accurate augmented solve, `predicted_reduction` also equals
+`1/2 * (||sqrt(lambda) * d * s||_2^2 - g^T s)`; compute the scaled norm
+directly without forming `lambda * d_j^2`. Tests use that identity as a solve
+check, not as a second definition. Dot products and norms use stable private
+accumulators.
 
-The private kernel factors and solves the damped symmetric system; it never
-computes `inverse(J^T J)`. To reduce scale sensitivity in an already formed
-positive-diagonal matrix `A`, it symmetrically equilibrates it:
-
-```text
-scale_j = sqrt(A[j,j])
-C[i,j]  = (A[i,j] / scale_i) / scale_j
-tau     = 64 * max(1, n) * 2^-52
-```
-
-It solves the correlation-scale system `C y = b / scale` and returns
-`x_j = y_j / scale_j`. A non-finite or non-positive diagonal is a breakdown.
-Cholesky uses symmetric diagonal pivoting: at each column choose the largest
-remaining Schur-complement diagonal, break an exact tie by the lowest original
-column index, swap both matrix axes and the right-hand side, and unpermute the
-solution. During factorization, `p < -tau` is indefinite and
-`-tau <= p <= tau` is singular at the v0.1 precision contract. The same
-pivoting, equilibration, and `tau` define full column rank for covariance.
-Sequential division avoids overflowing `scale_i * scale_j`; every factor and
-solution entry must remain finite. The checked solution also requires
-
-```text
-||C y - b_scaled||_inf
-    <= 128 n epsilon * max(1, ||b_scaled||_inf, ||C||_inf ||y||_inf)
-```
-
-using stable norm/product helpers. Otherwise the solve is a numerical
-breakdown rather than a usable step.
-
-Equilibration makes the factor decision insensitive to exact positive diagonal
-congruence of the supplied matrix when no intermediate underflows or overflows.
-It does not make the complete LM proposal invariant to parameter units: forming
-`B + lambda D` uses the absolute `1e-15` damping floor, so a rescaling that
-crosses that floor can change the proposal. Kernel rescaling tests stay above
-the floor; separate solver tests cover crossings explicitly.
-
-The rank label means numerical rank under this pivot policy, threshold, and
-input column order. Symmetric pivoting reduces order sensitivity but cannot
-make a threshold-boundary matrix permutation invariant under floating-point
-rounding; an exact diagonal tie uses the rule above. Permutation fixtures must
-agree away from `tau` and explicitly record allowed boundary sensitivity.
+The rank label means numerical rank under this QR pivot policy, threshold, and
+input column order. Column pivoting reduces order sensitivity but cannot make a
+threshold-boundary matrix permutation invariant under floating-point rounding.
+Permutation fixtures must agree away from `tau` and explicitly record allowed
+boundary sensitivity.
 
 Before evaluating the trial, check an enabled `xtol` against `||s||` using the
 documented step equation; success returns `STEP_TOLERANCE` at the current
@@ -427,15 +440,19 @@ For a finite positive prediction, evaluate `F(x_trial)`. A trial is accepted
 only when actual reduction and ratio are positive. Ratio above `0.75` divides
 damping by three; ratio below `0.25` doubles it; other accepted ratios retain
 damping; rejected trials use the weak update. Updates clamp to the documented
-finite bounds without overflowing. The normal post-acceptance termination
-order remains gradient, step, cost, iteration budget, then evaluation budget.
+finite bounds without overflowing. After a rejected trial increments
+`iterations`, check `MAX_ITERATIONS` before forming another proposal or making
+another budget reservation; then check whether the next full trial reservation
+fits. After a committed accepted trial, the termination order remains gradient,
+step, cost, iteration budget, then evaluation budget. Thus convergence can win
+on the last permitted accepted trial, while repeated rejection cannot evade the
+iteration budget.
 
 Do not expose a trust radius in v0.1: the current policy is parameterized by
 damping. Use the rust-cv and Ceres trust-region implementations as adversarial
 references for tests of scale, rank, rejection, and predicted reduction, not
-as code to translate. Pivoted QR is the first candidate replacement after the
-dense v0.1 contract is proven; it is not an excuse to expand into sparse or
-general trust-region solvers.
+as code to translate. A private dense pivoted-QR kernel is not an excuse to
+expand into sparse or general trust-region solvers.
 
 ## Weights and robust losses
 
@@ -484,9 +501,13 @@ For `a = abs(q_i)`, compute `rho1` and `A` with these piecewise stable formulas:
 
 Every squared ratio in this table is at most one. The implementation handles
 `a == 0` through the first branch. Any
-unrepresentable weighted residual, model row, model residual, gradient, normal
-entry, or cost raises at the initial state and becomes `NUMERICAL_FAILURE`
-after a complete accepted state exists.
+unrepresentable weighted residual, model row, model residual, gradient, or cost
+raises while constructing the initial accepted state and becomes
+`NUMERICAL_FAILURE` after a complete accepted state exists. A later
+unrepresentable column norm, augmented damping row, QR factor, or proposal is
+also `NUMERICAL_FAILURE`. These are internal arithmetic failures after a
+callback has returned a finite, correctly shaped vector; they are distinct from
+callback contract errors.
 
 `A_floor` stabilizes the solver model only. When covariance is requested,
 retain the final raw Jacobian and construct a separate statistical-curvature
@@ -510,7 +531,7 @@ Required cross-layer invariants are:
 
 - linear loss exactly reduces to ordinary weighted least squares and ignores
   `C`;
-- zero-weight rows contribute zero cost, gradient, and normal matrix;
+- zero-weight rows contribute zero cost, gradient, and local model curvature;
 - flipping one residual's sign preserves its cost and flips its gradient
   contribution;
 - finite differences of the scalar robust objective agree with `J^T f`;
@@ -533,21 +554,24 @@ observation covariance requires caller-side whitening and is also out of scope.
 Let `m_eff` be the count of strictly positive weights. Residual-variance scaling
 has degrees of freedom `m_eff - n`, not `m - n`, because zero-weight
 observations are excluded. When uncertainty is relative rather than known,
-scale the local inverse normal matrix by `2F / (m_eff - n)`. If known absolute
+scale the inverse local curvature by `2F / (m_eff - n)`. If known absolute
 uncertainty is introduced later, expose the absolute-versus-relative choice
 explicitly rather than inferring it from weight values.
 
 Covariance is unavailable, with a specific reason, when:
 
 - `m_eff <= n`;
-- the final model Jacobian is not numerically full column rank under the
-  equilibrated `tau` pivot rule above;
+- the final `J_covariance` is not numerically full column rank under the shared
+  relative column-pivoted-QR rule above;
 - any factorization, solve, variance scale, or output entry is non-finite;
 - termination is not `GRADIENT_TOLERANCE`, `STEP_TOLERANCE`, or
   `COST_TOLERANCE`.
 
-Compute inverse-normal columns through checked solves. Let `cmax` be the largest
-absolute output entry; require pairwise asymmetry no greater than
+Factor `J_covariance P = Q R` with the shared pivot and rank policy. Compute
+columns of the inverse local curvature as
+`P R^-1 R^-T P^T` through checked triangular solves; never form or invert
+`J_covariance^T J_covariance`. Let `cmax` be the largest absolute output entry;
+require pairwise asymmetry no greater than
 `128 n epsilon * max(1, cmax)`, then replace each off-diagonal pair by its
 average. Larger asymmetry makes covariance unavailable as non-finite/unstable
 arithmetic. Do not use a pseudoinverse in v0.1, return infinities, or call a
@@ -563,8 +587,9 @@ storage; no result borrows solver scratch memory.
 The public boundary distinguishes three outcomes:
 
 1. **Raise `Error`:** invalid entry configuration; model-raised error at any
-   call; changed model declaration/returned shape; or another violated public
-   callback contract. These are not convergence statuses.
+   call; changed model declaration/returned shape; non-finite callback return;
+   or another violated public callback contract. These are not convergence
+   statuses.
 2. **Return convergence or budget termination:** the reported accepted state
    and its cost/gradient are valid and mutually consistent.
 3. **Return `NUMERICAL_FAILURE`:** a complete accepted state exists, but a later
@@ -574,11 +599,12 @@ The public boundary distinguishes three outcomes:
 
 To preserve this distinction, the solver must call the model and validate its
 returned value in separate internal steps. Do not catch and erase a
-model-originated `Error` into `NUMERICAL_FAILURE`. A non-finite initial return
-raises; a later non-finite trial return is numerical failure after its completed
-call is counted. A changed dimension is always a callback-contract `Error`.
-The provider-specific initial/candidate Jacobian rules above apply the same
-last-complete-state boundary to perturbation returns.
+model-originated `Error` into `NUMERICAL_FAILURE`. Every non-finite callback
+return raises after its completed call is counted internally; because the solve
+aborts, no public partial count is returned. A changed dimension is likewise
+always a callback-contract `Error`. `NUMERICAL_FAILURE` is reserved for private
+arithmetic performed after finite validated callbacks and a complete accepted
+state. A future recoverable domain-invalid outcome needs a typed callback value.
 
 ## Minimal package surface
 
@@ -629,9 +655,22 @@ not requested; only an estimate present is available; only a reason present is
 unavailable; both present is invalid. `validate()`, `is_requested()`,
 `is_available()`, `estimate()`, and `unavailable_reason()` all raise and
 revalidate at operation entry. `LeastSquaresResult.validate()` also validates
-the report. Coherent public mutation is supported; invalid combinations or
-invalid nested snapshots are rejected by every library operation that consumes
-them.
+the report and its result-level relationships:
+
+- an available estimate requires successful termination and
+  `estimate.parameter_count == len(result.parameters)`;
+- a requested covariance on a non-converged result is unavailable specifically
+  with `NONCONVERGED_TERMINATION`;
+- `NONCONVERGED_TERMINATION` is invalid on a converged result;
+- other unavailable reasons require a converged result.
+
+Coherent public mutation is supported. Report operations reject report-local
+invalid combinations and nested snapshots. `LeastSquaresResult.validate()` and
+every future library operation that consumes the complete result reject
+contradictory dimension/termination/status combinations; a detached report
+cannot infer result context. As with the existing mutable result fields,
+validation cannot prove that caller-mutated numeric values still came from one
+solver state; callers own that semantic coherence.
 
 Covariance is computed from the retained final raw Jacobian and unfloored
 curvature factors only when requested. It never reevaluates the user's model
@@ -639,9 +678,9 @@ after termination.
 Internal matrix, provider, state, damping, factorization, and robust-transform
 values do not leak through `__init__.mojo`.
 
-Do not expose BFGS/L-BFGS placeholders, a universal array, a solver class with
-mutable lifetime, a public backend trait, or unimplemented analytic Jacobian
-symbols in v0.1.
+Do not expose general-minimizer placeholders, a universal array, a solver class
+with mutable lifetime, a public backend trait, or unimplemented analytic
+Jacobian symbols in v0.1.
 
 ## Test architecture
 
@@ -656,6 +695,8 @@ the failing case.
   options, and residual-count changes;
 - all tolerances disabled at solve entry, proving rejection before a callback;
 - stateful/move-only model operation and propagation of its exact error;
+- a stateful model whose cache and counter mutations preserve identical output
+  for identical parameters, documenting the semantic-determinism obligation;
 - affine, quadratic, coupled, constant-column, extreme-parameter, and
   representable-next-value finite differences;
 - maximum finite parameters, subnormal relative steps, preferred positive and
@@ -663,20 +704,19 @@ the failing case.
 - exact residual/Jacobian counts with and without a supplied base residual;
 - budget one short of a full initial or accepted-state Jacobian, proving no
   partial callback begins;
-- later NaN/Inf trial versus later wrong-size trial, proving failure versus
-  raised contract error.
+- initial, trial, and perturbation NaN/Inf returns, wrong-size returns, changed
+  declarations, and model-raised errors, proving every callback violation
+  raises without being translated into solver status.
 
 ### Dense kernel and LM step
 
-- hand-computed `1x1`, `2x2`, and `3x3` products and solves;
-- scaled diagonal, zero column, near-rank-loss, ill-conditioned and singular
+- hand-computed square and overdetermined QR factors and solves;
+- reconstruction `A P = Q R`, reflector orthogonality, triangular residuals,
+  scaled columns, zero columns, near-rank-loss, ill-conditioned and deficient
   cases;
-- diagonal-rescaling equivalents proving the equilibrated pivot decision is
-  stable for the supplied kernel matrix, plus parameter permutations and cases
-  immediately around `tau`;
-- solver-level rescalings that stay above and cross the absolute damping floor,
-  documenting where unit invariance does and does not hold;
-- two-sided solve residual checks instead of comparison only to parameters;
+- common scaling, parameter permutations, exact pivot ties, and cases
+  immediately around the relative `tau` threshold;
+- solver-level parameter rescalings proving no absolute damping-floor boundary;
 - monotonic step-norm reduction as damping increases;
 - direct and damping-identity predicted-reduction agreement, finite ratio
   boundaries at `0`, `0.25`, and `0.75`, damping clamps, enabled pre-trial
@@ -689,13 +729,14 @@ the failing case.
 - weighted line fit and zero-weight equivalence to deleting an observation;
 - exact affine, Rosenbrock residual, fixed curve fit, contaminated robust fit,
   rank-deficient, and repeated-rejection problems;
-- every termination reason and simultaneous tolerance/budget precedence;
+- every termination reason and simultaneous tolerance/budget precedence,
+  including rejection reaching `MAX_ITERATIONS` before another proposal;
 - instrumented callback counts equal the result exactly;
 - covariance against hand-calculated linear regression, known weighting
   equivalence, relative variance scaling, zero-weight effective degrees of
   freedom, all-Huber-outlier zero-rank behavior, parameter permutations,
-  symmetry, non-negative diagonal, public mutation revalidation, and every
-  unavailable reason.
+  symmetry, non-negative diagonal, public mutation revalidation, result/report
+  dimension and termination cross-validation, and every unavailable reason.
 
 The rust-cv MINPACK-derived cases are a guide to problem selection only. Any
 Nerai fixture derived from an external dataset needs explicit license and
@@ -734,8 +775,8 @@ cross-language headline comparisons are out of scope.
 | Three-value robust loss transform | Adopt | Matches objective gradient/model construction needs |
 | Private forward-difference provider | Adopt for v0.1 | Meets release scope without freezing a public matrix buffer |
 | Analytic provider refinement | Defer | Raw-Jacobian convention is fixed, but Mojo output-buffer API is not proven |
-| Damped checked normal-equation solve | Adopt for v0.1 only | Existing bounded scope; never explicitly invert; test aggressively |
-| Pivoted QR trust subproblem | Defer, preferred next kernel | Better scale/rank behavior, but larger than current v0.1 step issue |
+| Augmented column-pivoted-QR LM solve | Adopt for v0.1 | Avoids forming `J^T J`, removes the absolute damping floor, and provides one rank policy |
+| Public trust-region strategy/radius | Reject for v0.1 | Damping remains fixed policy; do not expose a strategy framework |
 | General executor/minimizer framework | Reject | Expands scope before least-squares behavior is stable |
 | Runtime solver/provider enums | Reject | Complicate static ownership and invite unsupported combinations |
 | Callback failure fallback | Reject | Hides user errors and changes counts/results silently |
@@ -747,47 +788,48 @@ cross-language headline comparisons are out of scope.
 Proceed only when the previous gate is green:
 
 1. **NERAI-001 and NERAI-002 — completed foundations.** Preserve the objective,
-   result, options, ownership, mutation revalidation, and callback contract.
+   result, options, ownership, mutation revalidation, callback contract, and
+   semantic-determinism obligation.
 2. **NERAI-003 — private dense kernel.** Add checked row-major storage,
-   accumulations, norms, products, damped symmetric factor/solve, pivot/rank
-   policy with diagonal equilibration, symmetric diagonal pivoting, and the
-   fixed `tau`, plus isolated numerical tests. No public matrix export.
+   accumulations, norms, products, deterministic column-pivoted Householder QR,
+   reflector application, checked triangular solves, and the shared relative
+   rank policy, plus isolated numerical tests. No public matrix export and no
+   normal-matrix formation.
 3. **NERAI-004 — provider boundary and forward differences.** Implement private
    provider/counters, accepted base-residual reuse, the bounded
-   positive-then-negative perturbation search, shape/finite phase rules,
+   positive-then-negative perturbation search, uniform raising callback rules,
    full-Jacobian atomic accounting, and conservative evaluation reservation.
    Do not export the future analytic trait.
 4. **NERAI-005 — weights and robust model.** Produce cost, model residual,
    model Jacobian, gradient, and optimality with the fixed `A_floor` formulas in
    one internal operation; prove scalar-objective gradient agreement and
    extreme-value behavior.
-5. **NERAI-006 — one checked LM proposal.** Solve the damped system, calculate
-   the exact undamped-model predicted reduction above, cross-check the damping
-   identity, and return typed private breakdown without iteration policy or
-   callback ownership.
+5. **NERAI-006 — one checked LM proposal.** Build and solve the augmented QR
+   system without `J^T J` or an absolute floor, calculate the exact
+   undamped-model predicted reduction above, cross-check the damping identity,
+   and return typed private breakdown without iteration policy or callback
+   ownership.
 6. **NERAI-007 — accepted/trial state machine.** Add ratio/damping updates,
    atomic accept, rejection preservation, trial classification, exact counters,
-   and non-finite-trial handling.
+   internal non-finite-arithmetic handling, and the post-rejection iteration
+   budget exit.
 7. **NERAI-008 — public solve.** Add the single root solve function, solve-entry
    dimension/tolerance capture, initial/final provider reservation, pre-trial
    step handling, termination precedence, callback-error preservation, and
    last-valid-state result.
 8. **NERAI-009 — covariance.** Add the option, mutation-revalidating
-   estimate/report/reason values, unfloored statistical-curvature Jacobian,
-   effective positive-weight degrees of freedom, allowed termination set,
-   checked solves, and explicit approximate robust-loss semantics.
+   estimate/report/reason values with result-level dimension/termination/status
+   checks, unfloored `J_covariance`, effective positive-weight degrees of
+   freedom, allowed termination set, checked QR triangular solves, and explicit
+   approximate robust-loss semantics.
 9. **NERAI-010 — end-to-end corpus.** Independently generate and document every
    fixture; run the full success, robustness, rank, budget, and determinism
    gates on all CI targets.
 10. **NERAI-011 — release audit.** Add API/example/benchmark/package smoke
     evidence, prove every root export, and confirm no deferred API leaked.
 
-Before NERAI-003 begins, update `implementation-plan.md` with the equilibrated
-pivot rule. Before NERAI-004, add the exact perturbation, phase-specific failure,
-and accepted-state Jacobian reservation rules. Before NERAI-005, add the stable
-robust-model formulas and floor. Before NERAI-006/007, add the trial/reduction
-equations and pre-trial no-progress policy. Before NERAI-008, require an enabled
-tolerance at solve entry. Before NERAI-009, define the covariance API,
-operation-time mutation validation, unfloored statistical Jacobian, termination
-set, and positive-weight `m_eff` degrees of freedom. These are correctness
-requirements discovered by this review, not optional enhancements.
+The implementation plan now carries the augmented QR/rank policy, exact
+perturbation and callback behavior, accepted-state reservation, stable robust
+model, reduction equations, rejected-trial budget exit, enabled-tolerance solve
+entry, and covariance mutation/statistical contracts. Future architecture
+changes must update that executable plan before their dependent issue begins.
