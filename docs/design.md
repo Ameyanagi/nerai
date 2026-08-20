@@ -35,19 +35,16 @@ scale square.
 
 ## Mojo 1.0 mutation and invariants
 
-Mojo 1.0 does not make an underscore-prefixed struct field private. A caller
-with a mutable value can assign that field directly. Nerai therefore uses total
-representations for finite semantic states:
+Finite semantic states follow the standard-library nominal-enum pattern:
 
-- `LossKind` uses `Optional[Bool]`, whose three states map exactly to linear,
-  Huber, and soft-L1.
-- `TerminationReason` uses `Bool` times `Optional[Bool]`, whose six states map
-  exactly to the three convergence reasons, two budget limits, and numerical
-  failure.
+- `LossKind` is an `Int`-backed struct with constants for linear, Huber, and
+  soft-L1.
+- `TerminationReason` is an `Int`-backed struct with constants for the three
+  convergence reasons, two budget limits, and numerical failure.
 
-Integer discriminants and unchecked constructor flags are excluded. Direct
-field mutation can select another documented state but cannot create an unknown
-loss or termination reason.
+The integer discriminants are underscore-prefixed and constructors are used
+privately by convention. Direct field mutation or raw integer construction is
+outside the public contract.
 
 `LossEvaluation` and `LeastSquaresResult` are mutable numeric snapshots. Their
 floating-point and collection fields cannot encode finiteness or cross-field

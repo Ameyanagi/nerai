@@ -50,19 +50,12 @@ struct LeastSquaresProblem[M: ResidualModel](Movable):
         *,
         options: Optional[LeastSquaresOptions] = None,
     ) raises:
-        _validate_parameters(initial_parameters)
-        var residual_count = model.residual_count()
-        if residual_count < len(initial_parameters):
-            raise Error("residual count must be at least the parameter count")
-        self.model = model^
-        self.initial_parameters = initial_parameters.copy()
-        self.weights = List[Float64](length=residual_count, fill=1.0)
-        self.residual_count = residual_count
-        if options:
-            self.options = options.value().copy()
-        else:
-            self.options = LeastSquaresOptions()
-        self.validate()
+        self = Self(
+            model^,
+            initial_parameters,
+            _weights=Optional[List[Float64]](None),
+            options=options,
+        )
 
     def __init__(
         out self,
@@ -72,13 +65,31 @@ struct LeastSquaresProblem[M: ResidualModel](Movable):
         weights: List[Float64],
         options: Optional[LeastSquaresOptions] = None,
     ) raises:
+        self = Self(
+            model^,
+            initial_parameters,
+            _weights=Optional(weights.copy()),
+            options=options,
+        )
+
+    def __init__(
+        out self,
+        var model: Self.M,
+        initial_parameters: List[Float64],
+        *,
+        var _weights: Optional[List[Float64]],
+        options: Optional[LeastSquaresOptions] = None,
+    ) raises:
         _validate_parameters(initial_parameters)
         var residual_count = model.residual_count()
         if residual_count < len(initial_parameters):
             raise Error("residual count must be at least the parameter count")
         self.model = model^
         self.initial_parameters = initial_parameters.copy()
-        self.weights = weights.copy()
+        if _weights:
+            self.weights = _weights.take()
+        else:
+            self.weights = List[Float64](length=residual_count, fill=1.0)
         self.residual_count = residual_count
         if options:
             self.options = options.value().copy()

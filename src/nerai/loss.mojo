@@ -1,6 +1,5 @@
 """Built-in robust loss functions for nonlinear least squares."""
 
-from std.collections import Optional
 from std.math import sqrt
 from std.utils.numerics import isfinite
 
@@ -12,25 +11,17 @@ struct LossKind(Copyable, Equatable, ImplicitlyCopyable):
     respect to ``z``, where ``z`` is a normalized squared residual.
     """
 
-    comptime LINEAR = LossKind(Optional[Bool](None))
-    comptime HUBER = LossKind(Optional(False))
-    comptime SOFT_L1 = LossKind(Optional(True))
+    comptime LINEAR = LossKind(0)
+    comptime HUBER = LossKind(1)
+    comptime SOFT_L1 = LossKind(2)
 
-    # Optional[Bool] has exactly three states, so even direct field mutation
-    # always denotes one of the documented loss functions.
-    var _nonlinear: Optional[Bool]
+    var _value: Int
 
-    def __init__(out self, nonlinear: Optional[Bool]):
-        self._nonlinear = nonlinear.copy()
+    def __init__(out self, value: Int):
+        self._value = value
 
     def __eq__(self, other: Self) -> Bool:
-        if self._nonlinear:
-            if not other._nonlinear:
-                return False
-            return self._nonlinear.value() == other._nonlinear.value()
-        if other._nonlinear:
-            return False
-        return True
+        return self._value == other._value
 
 
 struct LossEvaluation(Copyable, ImplicitlyCopyable):
@@ -64,10 +55,10 @@ def evaluate_loss(loss: LossKind, squared_residual: Float64) raises -> LossEvalu
     if not isfinite(squared_residual) or squared_residual < 0.0:
         raise Error("squared residual must be finite and non-negative")
 
-    if not loss._nonlinear:
+    if loss == LossKind.LINEAR:
         return LossEvaluation(squared_residual, 1.0, 0.0)
 
-    if not loss._nonlinear.value():
+    if loss == LossKind.HUBER:
         if squared_residual <= 1.0:
             return LossEvaluation(squared_residual, 1.0, 0.0)
         var root = sqrt(squared_residual)
@@ -108,14 +99,14 @@ def robust_cost(
 
     # Multiplying by one half before squaring preserves every representable
     # linear cost, including values whose unscaled square would overflow.
-    if not loss._nonlinear:
+    if loss == LossKind.LINEAR:
         var linear_cost = (0.5 * magnitude) * magnitude
         if not isfinite(linear_cost):
             raise Error("robust cost overflowed")
         return linear_cost
 
     var cost: Float64
-    if not loss._nonlinear.value():
+    if loss == LossKind.HUBER:
         if magnitude <= scale:
             cost = (0.5 * magnitude) * magnitude
         else:

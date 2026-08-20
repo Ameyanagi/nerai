@@ -147,17 +147,10 @@ def test_loss_inputs_are_validated() raises:
         _ = robust_cost(LossKind.LINEAR, 1.0, scale=0.0)
 
 
-def test_every_reachable_loss_mutation_has_defined_semantics() raises:
-    var loss = LossKind.LINEAR
-
-    loss._nonlinear = None
-    assert_close(evaluate_loss(loss, 4.0).value, 4.0)
-
-    loss._nonlinear = False
-    assert_close(evaluate_loss(loss, 4.0).value, 3.0)
-
-    loss._nonlinear = True
-    assert_close(evaluate_loss(loss, 3.0).value, 2.0)
+def test_loss_kinds_are_distinct_nominal_values() raises:
+    assert_true(LossKind.LINEAR != LossKind.HUBER)
+    assert_true(LossKind.LINEAR != LossKind.SOFT_L1)
+    assert_true(LossKind.HUBER != LossKind.SOFT_L1)
 
 
 def main() raises:

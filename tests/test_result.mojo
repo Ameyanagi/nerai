@@ -108,34 +108,14 @@ def test_result_rejects_invalid_reports() raises:
         )
 
 
-def test_every_reachable_termination_mutation_has_defined_semantics() raises:
-    var reason = TerminationReason.GRADIENT_TOLERANCE
-
-    reason._stopped = False
-    reason._detail = None
-    assert_true(reason == TerminationReason.GRADIENT_TOLERANCE)
-    assert_true(reason.is_success())
-
-    reason._detail = False
-    assert_true(reason == TerminationReason.STEP_TOLERANCE)
-    assert_true(reason.is_success())
-
-    reason._detail = True
-    assert_true(reason == TerminationReason.COST_TOLERANCE)
-    assert_true(reason.is_success())
-
-    reason._stopped = True
-    reason._detail = None
-    assert_true(reason == TerminationReason.MAX_ITERATIONS)
-    assert_true(reason.is_limit())
-
-    reason._detail = False
-    assert_true(reason == TerminationReason.MAX_EVALUATIONS)
-    assert_true(reason.is_limit())
-
-    reason._detail = True
-    assert_true(reason == TerminationReason.NUMERICAL_FAILURE)
-    assert_true(reason.is_failure())
+def test_termination_reasons_are_distinct_nominal_values() raises:
+    assert_true(
+        TerminationReason.GRADIENT_TOLERANCE != TerminationReason.STEP_TOLERANCE
+    )
+    assert_true(TerminationReason.COST_TOLERANCE != TerminationReason.MAX_ITERATIONS)
+    assert_true(
+        TerminationReason.MAX_EVALUATIONS != TerminationReason.NUMERICAL_FAILURE
+    )
 
 
 def test_mutated_numeric_report_can_be_revalidated() raises:
@@ -154,9 +134,7 @@ def test_mutated_numeric_report_can_be_revalidated() raises:
     with assert_raises(contains="result cost must be finite and non-negative"):
         result.validate()
 
-    # Termination remains total even while the numeric snapshot is invalid.
-    result.termination._stopped = True
-    result.termination._detail = True
+    result.termination = TerminationReason.NUMERICAL_FAILURE
     assert_true(result.termination.is_failure())
     assert_false(result.converged())
 
