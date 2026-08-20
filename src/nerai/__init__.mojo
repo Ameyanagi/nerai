@@ -4,4 +4,5 @@ from .loss import LossEvaluation, LossKind, evaluate_loss, robust_cost
 from .options import LeastSquaresOptions
 from .problem import LeastSquaresProblem, ResidualModel
 from .result import LeastSquaresResult
+from .solve import least_squares
 from .termination import TerminationReason
