@@ -35,3 +35,17 @@ The [v0.1 implementation plan](implementation-plan.md) is the source of truth
 for the objective equation, callback and Jacobian conventions, termination
 precedence, counters, numerical gates, and issue dependency order. Architectural
 changes to the solver update that contract before implementation.
+
+## Implemented problem boundary
+
+`LeastSquaresProblem[M: ResidualModel]` owns one concrete model and dispatches
+without an FFI boundary, heap-erased callback, or runtime type switch. The
+model exposes a fixed residual count and a raising `mut self` evaluation method,
+so instrumented or cached models can update their own state. Model errors
+propagate to the caller. Nerai validates initial parameters, observation
+weights, configuration, model-declared shape, and every returned residual
+before later numerical layers receive them.
+
+The problem uses Mojo `List[Float64]` values and does not create a public matrix
+or array abstraction. The current public method evaluates residuals only; it
+does not yet calculate a Jacobian, objective, step, or solution.

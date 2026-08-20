@@ -148,6 +148,11 @@ dynamic dispatch; invalid dimensions, weights, tolerances, damping, and budgets
 have focused error tests; an example evaluates a two-parameter problem through
 the public contract; `pixi run check` passes.
 
+**Status:** implemented in the current working tree. `ResidualModel` is an
+owned, statically dispatched, raising callback with a stable declared residual
+count. `LeastSquaresProblem` and `LeastSquaresOptions` revalidate all reachable
+numeric, shape, weight, and configuration state before residual evaluation.
+
 ### NERAI-003 — Private dense numerical kernel
 
 **Depends on:** NERAI-002.

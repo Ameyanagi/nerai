@@ -8,3 +8,6 @@ and uses semantic versioning after the first public release.
 ### Added
 
 - Initial experimental repository scaffold.
+- Robust-loss, termination, and least-squares result foundations.
+- Statically dispatched stateful residual models with validated problem and
+  solver-option contracts.

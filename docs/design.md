@@ -58,6 +58,23 @@ Its only query, `converged()`, depends solely on the total termination value.
 that accept either snapshot must revalidate every numeric and shape invariant at
 their boundary.
 
+`LeastSquaresOptions` and `LeastSquaresProblem` also contain writable numeric
+and collection fields. Options construction and `validate()` enforce finite
+positive enabled tolerances, loss scale, damping values, and finite-difference
+step; positive budgets; and ordered damping bounds. A problem owns its model,
+initial parameters, resolved weights, declared residual count, and options.
+Both residual-evaluation methods call `validate()` before the model, then check
+the returned length and finiteness. Consequently mutation through safe public
+field and collection operations cannot reach a numerical kernel or be silently
+interpreted as another configuration. A caller can still mutate a value into an
+invalid snapshot, so passing it to a later solver or evaluator can raise.
+
+The stateful residual callback uses static generic dispatch. `mut self` permits
+instrumentation and model-local caches, while a read-only parameter list keeps
+parameter ownership with the problem or caller. The returned list is owned by
+the caller. Callback `Error` values propagate; Nerai does not translate a model
+domain error into solver convergence or numerical failure.
+
 ## Out of scope
 
 Interpolation, plotting, domain-specific models, automatic differentiation, global optimization, and a broad minimizer catalog are outside v0.1.

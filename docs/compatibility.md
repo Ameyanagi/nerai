@@ -24,6 +24,7 @@ its first release. Each release names the exact compiler used to build it.
 
 Mojo 1.0 callers can mutate underscore-prefixed struct fields. Nerai's closed
 semantic values remain defined under that mutation; numeric report snapshots
-require revalidation after caller mutation. The exact guarantees and audited
+require revalidation after caller mutation. Mutable problem and option values
+are revalidated before residual callbacks. The exact guarantees and audited
 public structs are documented in
 [Mojo 1.0 mutation and invariants](design.md#mojo-10-mutation-and-invariants).

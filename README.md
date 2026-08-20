@@ -14,10 +14,12 @@ losses, covariance estimates, and explicit termination reporting.
 The project is independently installable and does not require any application
 from the wider ecosystem.
 
-The first public foundation is implemented: built-in loss functions use an
-explicit normalized-squared-residual convention, and solver results distinguish
-successful convergence, budget exhaustion, and numerical failure. The solve
-loop is not implemented. See the
+The first two public foundations are implemented: built-in loss functions use
+an explicit normalized-squared-residual convention; solver results distinguish
+successful convergence, budget exhaustion, and numerical failure; and
+`LeastSquaresProblem` owns a statically dispatched, stateful residual model
+behind validated `Float64` parameters, weights, and options. The solve loop,
+Jacobian, and numerical kernel are not implemented. See the
 [issue-sized v0.1 implementation plan](docs/implementation-plan.md).
 
 ## Development
@@ -43,8 +45,8 @@ The Mojo import is `nerai`. The eventual Conda distribution is
 `__init__.mojo` defines the package boundary.
 
 The current experimental root exports robust-loss and solver-report semantic
-values. These APIs are tested but do not carry a source-compatibility promise
-before the first release.
+values plus the residual-model, problem, and option contracts. These APIs are
+tested but do not carry a source-compatibility promise before the first release.
 
 ## Repository map
 
