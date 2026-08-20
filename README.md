@@ -22,6 +22,12 @@ behind validated `Float64` parameters, weights, and options. The solve loop,
 Jacobian, and numerical kernel are not implemented. See the
 [issue-sized v0.1 implementation plan](docs/implementation-plan.md).
 
+Residual models may be move-only. Each standalone evaluation snapshots its
+validated residual dimension and rejects a callback that changes that
+declaration before returning. Coherent direct mutation is explicit problem
+reconfiguration between evaluations; a future solver will capture and enforce
+one dimension for its complete solve.
+
 ## Development
 
 Install [Pixi](https://pixi.sh/), then run:

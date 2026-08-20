@@ -38,13 +38,21 @@ changes to the solver update that contract before implementation.
 
 ## Implemented problem boundary
 
-`LeastSquaresProblem[M: ResidualModel]` owns one concrete model and dispatches
-without an FFI boundary, heap-erased callback, or runtime type switch. The
-model exposes a fixed residual count and a raising `mut self` evaluation method,
-so instrumented or cached models can update their own state. Model errors
-propagate to the caller. Nerai validates initial parameters, observation
-weights, configuration, model-declared shape, and every returned residual
-before later numerical layers receive them.
+`LeastSquaresProblem[M: ResidualModel]` owns one concrete, potentially move-only
+model and dispatches without an FFI boundary, heap-erased callback, or runtime
+type switch. The model exposes its currently configured residual count and a
+raising `mut self` evaluation method, so instrumented or cached models can
+update their own state. Model errors propagate to the caller. Nerai validates
+initial parameters, observation weights, configuration, model-declared shape,
+and every returned residual before later numerical layers receive them.
+
+Mojo 1.0 public fields make coherent direct mutation an explicit problem
+reconfiguration between standalone evaluations or before a solve. Each
+evaluation snapshots the validated entry residual count and checks the model's
+declaration again after callback return. A callback cannot change its dimension
+during one call. A future solver must separately capture the solve-entry
+dimension and enforce it for the entire solve, even if the public problem is
+mutated between standalone calls.
 
 The problem uses Mojo `List[Float64]` values and does not create a public matrix
 or array abstraction. The current public method evaluates residuals only; it

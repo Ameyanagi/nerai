@@ -62,18 +62,25 @@ their boundary.
 and collection fields. Options construction and `validate()` enforce finite
 positive enabled tolerances, loss scale, damping values, and finite-difference
 step; positive budgets; and ordered damping bounds. A problem owns its model,
-initial parameters, resolved weights, declared residual count, and options.
-Both residual-evaluation methods call `validate()` before the model, then check
-the returned length and finiteness. Consequently mutation through safe public
-field and collection operations cannot reach a numerical kernel or be silently
-interpreted as another configuration. A caller can still mutate a value into an
-invalid snapshot, so passing it to a later solver or evaluator can raise.
+initial parameters, resolved weights, configured residual count, and options.
+Both residual-evaluation methods call `validate()` before the model, snapshot
+the entry residual count, then check the post-callback declaration, returned
+length, and finiteness.
 
-The stateful residual callback uses static generic dispatch. `mut self` permits
-instrumentation and model-local caches, while a read-only parameter list keeps
-parameter ownership with the problem or caller. The returned list is owned by
-the caller. Callback `Error` values propagate; Nerai does not translate a model
-domain error into solver convergence or numerical failure.
+An incoherent or invalid mutation therefore raises before a residual result can
+reach a numerical kernel. Coordinated mutation of the model declaration,
+problem count, and weights into another valid state is explicit problem
+reconfiguration between standalone evaluations or solves; it is not described
+as an impossible lifetime-fixed invariant. Each evaluation enforces its entry
+dimension. The future solver owns the stronger responsibility of capturing a
+solve-entry dimension and rejecting any change until that solve returns.
+
+The stateful residual callback uses static generic dispatch and requires only a
+movable model, not a copyable one. `mut self` permits instrumentation and
+model-local caches, while a read-only parameter list keeps parameter ownership
+with the problem or caller. The returned list is owned by the caller. Callback
+`Error` values propagate; Nerai does not translate a model domain error into
+solver convergence or numerical failure.
 
 ## Out of scope
 

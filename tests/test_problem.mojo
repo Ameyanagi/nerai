@@ -78,6 +78,50 @@ struct RaisingModel(Copyable, ResidualModel):
         raise Error("model failure")
 
 
+struct DriftingCountModel(Copyable, ResidualModel):
+    var declared_count: Int
+
+    def __init__(out self):
+        self.declared_count = 2
+
+    def residual_count(self) -> Int:
+        return self.declared_count
+
+    def residuals(mut self, parameters: List[Float64]) raises -> List[Float64]:
+        self.declared_count = 3
+        return [parameters[0], parameters[1]]
+
+
+struct ReconfigurableModel(Copyable, ResidualModel):
+    var declared_count: Int
+
+    def __init__(out self):
+        self.declared_count = 2
+
+    def residual_count(self) -> Int:
+        return self.declared_count
+
+    def residuals(mut self, parameters: List[Float64]) raises -> List[Float64]:
+        var residuals = List[Float64]()
+        for index in range(self.declared_count):
+            residuals.append(parameters[0] + Float64(index))
+        return residuals^
+
+
+struct MoveOnlyModel(ResidualModel):
+    var calls: Int
+
+    def __init__(out self):
+        self.calls = 0
+
+    def residual_count(self) -> Int:
+        return 1
+
+    def residuals(mut self, parameters: List[Float64]) raises -> List[Float64]:
+        self.calls += 1
+        return [parameters[0] - 2.0]
+
+
 def test_options_defaults_and_disabled_tolerances() raises:
     var defaults = LeastSquaresOptions()
     defaults.validate()
@@ -192,6 +236,13 @@ def test_problem_evaluates_stateful_model_through_static_contract() raises:
     assert_equal(problem.model.calls, 2)
 
 
+def test_problem_owns_move_only_residual_model() raises:
+    var problem = LeastSquaresProblem(MoveOnlyModel(), [2.0])
+    var residuals = problem.evaluate_initial_residuals()
+    assert_equal(residuals[0], 0.0)
+    assert_equal(problem.model.calls, 1)
+
+
 def test_problem_supplies_unit_weights() raises:
     var problem = LeastSquaresProblem(AffineModel(), [1.0, 2.0])
     assert_equal(len(problem.weights), 2)
@@ -265,6 +316,25 @@ def test_problem_rejects_invalid_callback_results() raises:
     var raising = LeastSquaresProblem(RaisingModel(), [1.0, 2.0])
     with assert_raises(contains="model failure"):
         _ = raising.evaluate_initial_residuals()
+
+
+def test_callback_cannot_change_its_entry_residual_dimension() raises:
+    var problem = LeastSquaresProblem(DriftingCountModel(), [1.0, 2.0])
+    with assert_raises(contains="changed during residual evaluation"):
+        _ = problem.evaluate_initial_residuals()
+    assert_equal(problem.model.declared_count, 3)
+
+
+def test_coherent_direct_mutation_reconfigures_between_evaluations() raises:
+    var problem = LeastSquaresProblem(ReconfigurableModel(), [2.0])
+    var initial = problem.evaluate_initial_residuals()
+    assert_equal(initial, [2.0, 3.0])
+
+    problem.model.declared_count = 3
+    problem.residual_count = 3
+    problem.weights = [1.0, 0.5, 0.25]
+    var reconfigured = problem.evaluate_initial_residuals()
+    assert_equal(reconfigured, [2.0, 3.0, 4.0])
 
 
 def main() raises:

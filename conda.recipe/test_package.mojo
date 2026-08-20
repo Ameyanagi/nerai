@@ -11,7 +11,7 @@ from nerai import (
 from std.testing import assert_false, assert_true
 
 
-struct InstalledModel(Copyable, ResidualModel):
+struct InstalledModel(ResidualModel):
     var calls: Int
 
     def __init__(out self):

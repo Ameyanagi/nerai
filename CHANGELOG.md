@@ -11,3 +11,5 @@ and uses semantic versioning after the first public release.
 - Robust-loss, termination, and least-squares result foundations.
 - Statically dispatched stateful residual models with validated problem and
   solver-option contracts.
+- Entry-snapshotted residual dimensions, explicit between-call problem
+  reconfiguration, and positive move-only model coverage.

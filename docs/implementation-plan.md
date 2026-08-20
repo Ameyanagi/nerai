@@ -28,8 +28,13 @@ The contract has these consequences:
   scale. It returns a finite cost whenever the mathematical cost is within the
   finite `Float64` range and raises only when that result overflows. Stable
   piecewise formulas do not require `(r / C)^2` or `C^2` to be representable.
-- A residual callback returns the same non-empty length on every call. Every
-  returned residual is finite.
+- A residual callback returns the same non-empty length throughout one solve.
+  Each standalone evaluation snapshots its validated entry dimension and
+  rejects a declaration change during that callback. Every returned residual
+  is finite.
+- Coherent direct mutation may explicitly reconfigure a problem between
+  standalone evaluations or before a solve. A solver captures the solve-entry
+  dimension and rejects changes until that solve returns.
 - v0.1 accepts at least one parameter and requires the residual count to be at
   least the parameter count.
 - A user-supplied or finite-difference Jacobian describes the raw residual:
@@ -149,9 +154,11 @@ have focused error tests; an example evaluates a two-parameter problem through
 the public contract; `pixi run check` passes.
 
 **Status:** implemented in the current working tree. `ResidualModel` is an
-owned, statically dispatched, raising callback with a stable declared residual
-count. `LeastSquaresProblem` and `LeastSquaresOptions` revalidate all reachable
-numeric, shape, weight, and configuration state before residual evaluation.
+owned, potentially move-only, statically dispatched raising callback. Each
+standalone evaluation enforces its validated entry residual count across the
+callback. `LeastSquaresProblem` and `LeastSquaresOptions` revalidate all
+reachable numeric, shape, weight, and configuration state before residual
+evaluation; coherent between-call mutation is explicit reconfiguration.
 
 ### NERAI-003 — Private dense numerical kernel
 

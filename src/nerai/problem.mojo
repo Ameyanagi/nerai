@@ -11,13 +11,15 @@ trait ResidualModel(Deinitable, Movable):
 
     A problem owns its model. ``residuals()`` receives read-only parameters,
     may update model state through ``mut self``, and may raise a model-specific
-    ``Error``. ``residual_count()`` must stay constant over the model's
-    lifetime. Problem evaluation checks both the declaration and every
-    returned residual vector, so violations fail at the callback boundary.
+    ``Error``. ``residual_count()`` must stay constant from entry to return of
+    each ``residuals()`` call. Coherent direct mutation may reconfigure a
+    problem between standalone evaluations, but never during one callback.
+    Problem evaluation checks both the entry declaration and every returned
+    residual vector, so violations fail at the callback boundary.
     """
 
     def residual_count(self) -> Int:
-        """Return the model's fixed number of residuals."""
+        """Return the model's currently configured number of residuals."""
         ...
 
     def residuals(mut self, parameters: List[Float64]) raises -> List[Float64]:
@@ -32,6 +34,7 @@ struct LeastSquaresProblem[M: ResidualModel](Movable):
     finite and non-negative with at least one positive entry; omitting weights
     creates one unit weight per residual. Public fields support ordinary Mojo
     value use, and every evaluation revalidates them before invoking the model.
+    Coherent direct mutation is explicit reconfiguration between evaluations.
     """
 
     var model: Self.M
@@ -91,7 +94,7 @@ struct LeastSquaresProblem[M: ResidualModel](Movable):
         if self.residual_count < len(self.initial_parameters):
             raise Error("residual count must be at least the parameter count")
         if self.model.residual_count() != self.residual_count:
-            raise Error("model residual count changed after problem creation")
+            raise Error("model residual count must match the problem configuration")
         if len(self.weights) != self.residual_count:
             raise Error("weight count must equal the residual count")
 
@@ -113,16 +116,21 @@ struct LeastSquaresProblem[M: ResidualModel](Movable):
     def evaluate_residuals(mut self, parameters: List[Float64]) raises -> List[Float64]:
         """Evaluate one parameter vector and validate the callback result.
 
-        Model-specific errors propagate unchanged. Successful callback output
-        must have the declared stable length and contain only finite values.
+        Model-specific errors propagate unchanged. The configured residual
+        count is snapshotted at entry and must remain declared through callback
+        return. Successful output must have that length and contain only finite
+        values.
         """
         self.validate()
         _validate_parameters(parameters)
         if len(parameters) != len(self.initial_parameters):
             raise Error("parameter count must match the initial parameter count")
 
+        var entry_residual_count = self.residual_count
         var residuals = self.model.residuals(parameters)
-        if len(residuals) != self.residual_count:
+        if self.model.residual_count() != entry_residual_count:
+            raise Error("model residual count changed during residual evaluation")
+        if len(residuals) != entry_residual_count:
             raise Error("model returned an unexpected residual count")
         for index in range(len(residuals)):
             if not isfinite(residuals[index]):
