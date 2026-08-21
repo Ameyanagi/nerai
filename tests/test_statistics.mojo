@@ -11,7 +11,7 @@ from nerai import (
     least_squares,
 )
 from std.collections import List
-from std.math import abs, exp
+from std.math import abs, exp, sqrt
 from std.testing import TestSuite, assert_equal, assert_raises, assert_true
 from std.utils.numerics import inf
 
@@ -174,6 +174,26 @@ def test_statistics_match_scipy_curve_fit_fixture() raises:
         / (statistics.standard_error(0) * statistics.standard_error(1))
     )
     assert_true(abs(statistics.correlation(0, 0) - 1.0) <= 1.0e-12)
+
+
+def test_absolute_sigma_skips_reduced_chi_squared_rescaling() raises:
+    var weights = List[Float64](length=25, fill=0.0)
+    for index in range(25):
+        weights[index] = 1.0 / (0.03 + 0.002 * Float64(index))
+    var problem = LeastSquaresProblem(ScipyDecayModel(), [1.0, 1.0], weights=weights)
+    var result = least_squares(problem)
+    var relative = fit_statistics(problem, result)
+    var absolute = fit_statistics(problem, result, absolute_sigma=True)
+
+    assert_equal(absolute.degrees_of_freedom, relative.degrees_of_freedom)
+    assert_true(absolute.reduced_chi_squared == relative.reduced_chi_squared)
+    var scale = sqrt(relative.reduced_chi_squared)
+    for index in range(2):
+        assert_relative_close(
+            absolute.standard_error(index),
+            relative.standard_error(index) / scale,
+            1.0e-12,
+        )
 
 
 def test_central_scheme_matches_fixture_with_more_residual_calls() raises:

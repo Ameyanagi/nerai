@@ -44,28 +44,17 @@ struct _CurveAdapter[M: CurveModel](ResidualModel):
             )
         if len(t) < 1:
             raise Error("curve fitting requires at least one t/y observation")
-        if len(t) <= parameter_count:
-            var degrees_of_freedom = len(t) - parameter_count
-            if degrees_of_freedom == 0:
-                raise Error(
-                    String(
-                        len(t),
-                        " observations for ",
-                        parameter_count,
-                        (
-                            " parameters leaves zero degrees of freedom; add "
-                            "observations or fix parameters"
-                        ),
-                    )
-                )
+        if len(t) < parameter_count:
             raise Error(
                 String(
+                    "t/y observation count ",
                     len(t),
-                    " observations for ",
+                    " is less than parameter count ",
                     parameter_count,
-                    " parameters leaves ",
-                    degrees_of_freedom,
-                    " degrees of freedom; add observations or fix parameters",
+                    (
+                        "; curve fitting requires at least as many observations "
+                        "as parameters — add observations or fix parameters"
+                    ),
                 )
             )
 
@@ -110,11 +99,14 @@ struct CurveFit[M: CurveModel](Movable):
     storage during construction, so caller buffers need not outlive the fit.
     ``CurveModel.values(parameters, t) - y`` defines the raw residuals. When
     ``sigma`` is supplied, Nerai weights are ``1 / sigma`` and multiply each
-    residual once. Together with ``fit_statistics``, this matches SciPy
-    ``curve_fit(..., absolute_sigma=False)`` covariance semantics.
+    residual once. By default this matches SciPy
+    ``curve_fit(..., absolute_sigma=False)`` covariance semantics; the sigma
+    overload's ``absolute_sigma=True`` skips reduced-chi-squared rescaling for
+    known measurement uncertainties.
     """
 
     var _problem: LeastSquaresProblem[_CurveAdapter[Self.M]]
+    var _absolute_sigma: Bool
 
     def __init__(
         out self,
@@ -134,6 +126,7 @@ struct CurveFit[M: CurveModel](Movable):
             bounds=bounds,
             options=options,
         )
+        self._absolute_sigma = False
 
     def __init__(
         out self,
@@ -143,6 +136,7 @@ struct CurveFit[M: CurveModel](Movable):
         initial_parameters: List[Float64],
         *,
         sigma: Span[Float64, ...],
+        absolute_sigma: Bool = False,
         bounds: Optional[Bounds] = None,
         options: Optional[LeastSquaresOptions] = None,
     ) raises:
@@ -178,39 +172,91 @@ struct CurveFit[M: CurveModel](Movable):
             bounds=bounds,
             options=options,
         )
+        self._absolute_sigma = absolute_sigma
 
     def solve(mut self) raises -> CurveFitResult:
         """Fit from the stored initial values and return result statistics.
 
-        Solver failure terminations remain inspectable in the returned result
-        when statistics succeed. Model and statistics errors propagate.
+        Solver errors propagate. If post-fit statistics cannot be estimated,
+        the returned solver result remains available and reports the reason.
         """
         var result = least_squares(self._problem)
-        var statistics = fit_statistics(self._problem, result)
-        return CurveFitResult(result, statistics)
+        var statistics: FitStatistics
+        try:
+            statistics = fit_statistics(
+                self._problem,
+                result,
+                absolute_sigma=self._absolute_sigma,
+            )
+        except error:
+            return CurveFitResult(
+                result,
+                Optional[FitStatistics](),
+                statistics_message=String(error),
+            )
+        return CurveFitResult(result, Optional(statistics^))
 
 
 struct CurveFitResult(Copyable, Writable):
-    """A public least-squares result and its uncertainty statistics."""
+    """A public least-squares result and optional uncertainty statistics."""
 
     var result: LeastSquaresResult
-    var statistics: FitStatistics
+    var statistics: Optional[FitStatistics]
+    var statistics_message: String
 
     def __init__(
-        out self, result: LeastSquaresResult, statistics: FitStatistics
+        out self,
+        result: LeastSquaresResult,
+        statistics: Optional[FitStatistics],
+        *,
+        statistics_message: String = "",
     ) raises:
-        """Copy a result and matching statistics into one curve-fit result."""
+        """Copy a result and either matching statistics or their failure reason."""
         result.validate()
-        statistics.validate()
-        _ = FitReport(result, statistics)
+        if statistics:
+            var present_statistics = statistics.value().copy()
+            present_statistics.validate()
+            _ = FitReport(result, present_statistics)
+            if statistics_message.byte_length() != 0:
+                raise Error(
+                    String(
+                        "statistics_message must be empty when statistics are ",
+                        "present; got ",
+                        statistics_message,
+                    )
+                )
+        elif statistics_message.byte_length() == 0:
+            raise Error(
+                "statistics_message must describe why statistics are absent; "
+                "got an empty string — pass the fit_statistics error message"
+            )
         self.result = result.copy()
         self.statistics = statistics.copy()
+        self.statistics_message = String(statistics_message)
 
     def validate(self) raises:
-        """Revalidate both public fields and their matching dimensions."""
+        """Revalidate both public fields and their matching state."""
         self.result.validate()
-        self.statistics.validate()
-        _ = FitReport(self.result, self.statistics)
+        if self.statistics:
+            self.statistics.value().validate()
+            _ = FitReport(self.result, self.statistics.value())
+            if self.statistics_message.byte_length() != 0:
+                raise Error(
+                    String(
+                        "statistics_message must be empty when statistics are ",
+                        "present; got ",
+                        self.statistics_message,
+                    )
+                )
+        elif self.statistics_message.byte_length() == 0:
+            raise Error(
+                "statistics_message must describe why statistics are absent; "
+                "got an empty string — pass the fit_statistics error message"
+            )
+
+    def residuals(self) -> List[Float64]:
+        """Return a copy of the raw residual vector at the fitted parameters."""
+        return self.result.residuals.copy()
 
     def __str__(self) -> String:
         """Return exactly the stable stderr-aware ``FitReport`` block."""
@@ -220,8 +266,33 @@ struct CurveFitResult(Copyable, Writable):
 
     def write_to[W: Writer](self, mut writer: W):
         """Write exactly the stable stderr-aware ``FitReport`` block."""
-        try:
-            var report = FitReport(self.result, self.statistics)
-            report.write_to(writer)
-        except:
-            writer.write("invalid curve-fit result\n")
+        if self.statistics:
+            try:
+                var report = FitReport(self.result, self.statistics.value())
+                report.write_to(writer)
+            except:
+                writer.write("invalid curve-fit result\n")
+            return
+
+        writer.write("termination           ", self.result.termination, "\n")
+        writer.write(
+            "converged             ",
+            "yes" if self.result.converged() else "no",
+            "\n",
+        )
+        writer.write("cost                  ", self.result.cost, "\n")
+        writer.write("optimality            ", self.result.optimality, "\n")
+        writer.write("iterations            ", self.result.iterations, "\n")
+        writer.write("residual evaluations  ", self.result.residual_evaluations, "\n")
+        writer.write("jacobian evaluations  ", self.result.jacobian_evaluations, "\n")
+        for index in range(len(self.result.parameters)):
+            var label = String("parameters[", index, "]")
+            writer.write(label)
+            for _ in range(label.byte_length(), 22):
+                writer.write(" ")
+            writer.write(self.result.parameters[index], "\n")
+        writer.write(
+            "standard errors       not estimated: ",
+            self.statistics_message,
+            "\n",
+        )

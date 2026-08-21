@@ -27,14 +27,15 @@ struct FitStatistics(Copyable, Equatable, Writable):
     Convention: Statistics use the loss-scaled weighted residuals and Jacobian
     produced by the solver's objective model. Reduced chi-squared is
     ``sum(model_residual_i^2) / (m_effective - n)``, where ``m_effective``
-    counts positive-weight residuals. Covariance is
+    counts positive-weight residuals. By default, covariance is
     ``(J_model^T J_model)^-1 * reduced_chi_squared``, equivalently
     ``(J^T W J)^-1 * reduced_chi_squared`` for the effective row weighting.
-    With unit weights and linear loss this is exactly SciPy
-    ``curve_fit(..., absolute_sigma=False)`` covariance. Computing statistics
-    re-evaluates the model ``n + 1`` times with forward differences or
-    ``2n + 1`` times with central differences at the result parameters; those
-    callbacks are outside every solver evaluation budget.
+    This matches SciPy ``curve_fit(..., absolute_sigma=False)``. Passing
+    ``absolute_sigma=True`` to ``fit_statistics`` omits the reduced-chi-squared
+    scale and returns ``(J^T W J)^-1`` for known measurement uncertainties.
+    Computing statistics re-evaluates the model ``n + 1`` times with forward
+    differences or ``2n + 1`` times with central differences at the result
+    parameters; those callbacks are outside every solver evaluation budget.
     """
 
     var _covariance: List[Float64]
@@ -179,7 +180,10 @@ struct FitStatistics(Copyable, Equatable, Writable):
 def fit_statistics[
     M: ResidualModel
 ](
-    mut problem: LeastSquaresProblem[M], result: LeastSquaresResult
+    mut problem: LeastSquaresProblem[M],
+    result: LeastSquaresResult,
+    *,
+    absolute_sigma: Bool = False,
 ) raises -> FitStatistics:
     """Re-evaluate a fitted problem and estimate parameter uncertainty.
 
@@ -187,9 +191,11 @@ def fit_statistics[
     evaluated at ``result.parameters`` using the problem's finite-difference
     step. The resulting loss-scaled weighted objective model defines
     ``reduced_chi_squared = sum(model_residual_i^2) / (m_effective - n)`` and
-    ``covariance = (J^T W J)^-1 * reduced_chi_squared``. Unit weights with
-    linear loss match SciPy ``curve_fit(..., absolute_sigma=False)``. These
-    diagnostic callbacks are outside every solver evaluation budget.
+    ``covariance = (J^T W J)^-1 * reduced_chi_squared`` by default. With
+    ``absolute_sigma=True``, covariance is ``(J^T W J)^-1`` without that
+    rescaling. Unit weights with linear loss and the default match SciPy
+    ``curve_fit(..., absolute_sigma=False)``. These diagnostic callbacks are
+    outside every solver evaluation budget.
 
     Raises:
         Error: If dimensions mismatch, degrees of freedom are not positive, the
@@ -280,6 +286,9 @@ def fit_statistics[
 
     var normal = _jt_j(objective.jacobian)
     var covariance = List[Float64](length=parameter_count * parameter_count, fill=0.0)
+    var covariance_scale = 1.0
+    if not absolute_sigma:
+        covariance_scale = reduced_chi_squared
     for column in range(parameter_count):
         var right_hand_side = List[Float64](length=parameter_count, fill=0.0)
         right_hand_side[column] = 1.0
@@ -294,7 +303,7 @@ def fit_statistics[
             )
         for row in range(parameter_count):
             covariance[row * parameter_count + column] = (
-                inverse_column[row] * reduced_chi_squared
+                inverse_column[row] * covariance_scale
             )
 
     for row in range(parameter_count):

@@ -17,10 +17,12 @@ struct LeastSquaresResult(Copyable, Equatable, Writable):
     exceed ``residual_evaluations - 1``. Jacobian evaluations cannot exceed
     residual evaluations. ``active_bounds`` follows SciPy's active-mask
     convention: ``-1`` is lower-active, ``0`` is free, and ``1`` is
-    upper-active.
+    upper-active. ``residuals`` stores the raw model residual vector at the
+    reported parameters; an empty vector means it was not recorded.
     """
 
     var parameters: List[Float64]
+    var residuals: List[Float64]
     var cost: Float64
     var optimality: Float64
     var iterations: Int
@@ -39,9 +41,11 @@ struct LeastSquaresResult(Copyable, Equatable, Writable):
         residual_evaluations: Int,
         jacobian_evaluations: Int,
         termination: TerminationReason,
+        residuals: List[Float64] = List[Float64](),
         active_bounds: Optional[List[Int]] = None,
     ) raises:
         self.parameters = parameters.copy()
+        self.residuals = residuals.copy()
         self.cost = cost
         self.optimality = optimality
         self.iterations = iterations
@@ -60,15 +64,20 @@ struct LeastSquaresResult(Copyable, Equatable, Writable):
 
     def __eq__(self, other: Self) -> Bool:
         """Return whether every public report field is exactly equal."""
-        if len(self.parameters) != len(other.parameters) or len(
-            self.active_bounds
-        ) != len(other.active_bounds):
+        if (
+            len(self.parameters) != len(other.parameters)
+            or len(self.residuals) != len(other.residuals)
+            or len(self.active_bounds) != len(other.active_bounds)
+        ):
             return False
         for index in range(len(self.parameters)):
             if (
                 self.parameters[index] != other.parameters[index]
                 or self.active_bounds[index] != other.active_bounds[index]
             ):
+                return False
+        for index in range(len(self.residuals)):
+            if self.residuals[index] != other.residuals[index]:
                 return False
         return (
             self.cost == other.cost
@@ -131,6 +140,16 @@ struct LeastSquaresResult(Copyable, Equatable, Writable):
                         index,
                         "] must be finite; got ",
                         self.parameters[index],
+                    )
+                )
+        for index in range(len(self.residuals)):
+            if not isfinite(self.residuals[index]):
+                raise Error(
+                    String(
+                        "result residuals[",
+                        index,
+                        "] must be finite; got ",
+                        self.residuals[index],
                     )
                 )
         if len(self.active_bounds) != len(self.parameters):

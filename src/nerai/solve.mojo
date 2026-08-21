@@ -102,6 +102,7 @@ def least_squares[
         return _make_result(
             problem,
             parameters,
+            raw_residuals,
             initial_cost,
             0.0,
             iterations,
@@ -135,6 +136,7 @@ def least_squares[
         return _make_result(
             problem,
             parameters,
+            raw_residuals,
             initial_cost,
             0.0,
             iterations,
@@ -148,6 +150,7 @@ def least_squares[
             return _make_result(
                 problem,
                 parameters,
+                raw_residuals,
                 objective.cost,
                 objective.optimality,
                 iterations,
@@ -159,6 +162,7 @@ def least_squares[
         return _make_result(
             problem,
             parameters,
+            raw_residuals,
             objective.cost,
             objective.optimality,
             iterations,
@@ -178,6 +182,7 @@ def least_squares[
             return _make_result(
                 problem,
                 parameters,
+                raw_residuals,
                 objective.cost,
                 objective.optimality,
                 iterations,
@@ -201,6 +206,7 @@ def least_squares[
                 return _make_result(
                     problem,
                     parameters,
+                    raw_residuals,
                     objective.cost,
                     objective.optimality,
                     iterations,
@@ -229,6 +235,7 @@ def least_squares[
                     return _make_result(
                         problem,
                         parameters,
+                        raw_residuals,
                         objective.cost,
                         objective.optimality,
                         iterations,
@@ -251,6 +258,7 @@ def least_squares[
                         return _make_result(
                             problem,
                             parameters,
+                            raw_residuals,
                             objective.cost,
                             objective.optimality,
                             iterations,
@@ -274,6 +282,7 @@ def least_squares[
                 return _make_result(
                     problem,
                     parameters,
+                    raw_residuals,
                     objective.cost,
                     objective.optimality,
                     iterations,
@@ -312,6 +321,7 @@ def least_squares[
                 return _make_result(
                     problem,
                     parameters,
+                    raw_residuals,
                     objective.cost,
                     objective.optimality,
                     iterations,
@@ -324,6 +334,7 @@ def least_squares[
                 return _make_result(
                     problem,
                     parameters,
+                    raw_residuals,
                     objective.cost,
                     objective.optimality,
                     iterations,
@@ -335,6 +346,7 @@ def least_squares[
                 return _make_result(
                     problem,
                     parameters,
+                    raw_residuals,
                     objective.cost,
                     objective.optimality,
                     iterations,
@@ -352,6 +364,7 @@ def least_squares[
                 return _make_result(
                     problem,
                     parameters,
+                    raw_residuals,
                     objective.cost,
                     objective.optimality,
                     iterations,
@@ -364,6 +377,7 @@ def least_squares[
                 return _make_result(
                     problem,
                     parameters,
+                    raw_residuals,
                     objective.cost,
                     objective.optimality,
                     iterations,
@@ -375,6 +389,7 @@ def least_squares[
                 return _make_result(
                     problem,
                     parameters,
+                    raw_residuals,
                     objective.cost,
                     objective.optimality,
                     iterations,
@@ -417,6 +432,7 @@ def least_squares[
             return _make_result(
                 problem,
                 parameters,
+                raw_residuals,
                 trial_cost,
                 0.0,
                 iterations,
@@ -432,6 +448,7 @@ def least_squares[
                 return _make_result(
                     problem,
                     parameters,
+                    raw_residuals,
                     objective.cost,
                     objective.optimality,
                     iterations,
@@ -456,6 +473,7 @@ def least_squares[
                 return _make_result(
                     problem,
                     parameters,
+                    raw_residuals,
                     objective.cost,
                     objective.optimality,
                     iterations,
@@ -472,6 +490,7 @@ def least_squares[
                 return _make_result(
                     problem,
                     parameters,
+                    raw_residuals,
                     objective.cost,
                     objective.optimality,
                     iterations,
@@ -483,6 +502,7 @@ def least_squares[
             return _make_result(
                 problem,
                 parameters,
+                raw_residuals,
                 objective.cost,
                 objective.optimality,
                 iterations,
@@ -494,6 +514,7 @@ def least_squares[
             return _make_result(
                 problem,
                 parameters,
+                raw_residuals,
                 objective.cost,
                 objective.optimality,
                 iterations,
@@ -821,6 +842,7 @@ def _make_result[
 ](
     problem: LeastSquaresProblem[M],
     parameters: List[Float64],
+    residuals: List[Float64],
     cost: Float64,
     optimality: Float64,
     iterations: Int,
@@ -836,6 +858,7 @@ def _make_result[
         residual_evaluations=residual_evaluations,
         jacobian_evaluations=jacobian_evaluations,
         termination=termination,
+        residuals=residuals,
         active_bounds=_active_bounds(
             parameters,
             problem.bounds,

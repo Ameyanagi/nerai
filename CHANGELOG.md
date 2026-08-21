@@ -18,3 +18,12 @@ and uses semantic versioning after the first public release.
 - Weighted linear, Huber, and soft-L1 objective construction for solver steps.
 - Public Levenberg-Marquardt `least_squares()` with deterministic damping,
   explicit termination, and last-valid-state result reporting.
+
+### Changed
+
+- **Breaking:** `CurveFit.solve()` now returns converged fits with optional
+  statistics and a reportable reason when uncertainty estimation fails.
+- **Breaking:** `LeastSquaresResult` now records the raw residual vector at the
+  returned parameters, and exact result equality includes it.
+- Weighted `CurveFit` and `fit_statistics()` calls accept `absolute_sigma=True`
+  to skip reduced-chi-squared covariance rescaling.

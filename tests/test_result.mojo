@@ -7,7 +7,7 @@ from std.testing import (
     assert_raises,
     assert_true,
 )
-from std.utils.numerics import nan
+from std.utils.numerics import inf, nan
 
 
 def test_termination_categories_are_explicit() raises:
@@ -45,6 +45,7 @@ def test_result_preserves_solver_report() raises:
     assert_true(result.termination == TerminationReason.GRADIENT_TOLERANCE)
     assert_true(result.converged())
     assert_equal(result.active_bounds, [0, 0])
+    assert_equal(result.residuals, List[Float64]())
 
 
 def test_result_rejects_invalid_reports() raises:
@@ -174,6 +175,30 @@ def test_result_rejects_invalid_reports() raises:
             termination=TerminationReason.MAX_EVALUATIONS,
             active_bounds=Optional[List[Int]]([2]),
         )
+    with assert_raises(contains="result residuals[1] must be finite; got inf"):
+        _ = LeastSquaresResult(
+            [1.0, 2.0],
+            cost=0.0,
+            optimality=0.0,
+            iterations=0,
+            residual_evaluations=1,
+            jacobian_evaluations=0,
+            termination=TerminationReason.MAX_EVALUATIONS,
+            residuals=[0.0, inf[DType.float64]()],
+        )
+
+    # A recorded residual vector is not constrained by the parameter count.
+    var short_residuals = LeastSquaresResult(
+        [1.0, 2.0],
+        cost=0.0,
+        optimality=0.0,
+        iterations=0,
+        residual_evaluations=1,
+        jacobian_evaluations=0,
+        termination=TerminationReason.MAX_EVALUATIONS,
+        residuals=[0.5],
+    )
+    assert_equal(short_residuals.residuals, [0.5])
 
 
 def test_termination_reasons_are_distinct_nominal_values() raises:
@@ -218,6 +243,7 @@ def test_result_equality_compares_complete_public_reports() raises:
         residual_evaluations=5,
         jacobian_evaluations=2,
         termination=TerminationReason.GRADIENT_TOLERANCE,
+        residuals=[0.25, -0.5, 0.75],
     )
     var same = LeastSquaresResult(
         [1.0, -2.0],
@@ -227,6 +253,7 @@ def test_result_equality_compares_complete_public_reports() raises:
         residual_evaluations=5,
         jacobian_evaluations=2,
         termination=TerminationReason.GRADIENT_TOLERANCE,
+        residuals=[0.25, -0.5, 0.75],
     )
     assert_true(first == same)
 
@@ -236,6 +263,9 @@ def test_result_equality_compares_complete_public_reports() raises:
     same.active_bounds[1] = -1
     assert_false(first == same)
     same.active_bounds[1] = 0
+    same.residuals[2] = 1.0
+    assert_false(first == same)
+    same.residuals[2] = 0.75
     same.termination = TerminationReason.STEP_TOLERANCE
     assert_true(first != same)
 

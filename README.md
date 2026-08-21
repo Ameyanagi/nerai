@@ -130,7 +130,8 @@ Covariance is `(J^T W J)^-1 * reduced_chi_squared`, with degrees of freedom
 `m_effective - n`; this follows SciPy `curve_fit(..., absolute_sigma=False)`
 semantics. Weights multiply residuals once. On the `CurveFit` front door,
 `sigma` maps to `w_i = 1 / sigma_i` with `absolute_sigma=False` covariance
-semantics.
+semantics. Supplying `sigma` with `absolute_sigma=True` skips the
+reduced-chi-squared rescaling, matching SciPy.
 
 ## Development
 
