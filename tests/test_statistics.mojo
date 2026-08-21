@@ -206,7 +206,7 @@ def test_rank_deficient_jacobian_has_a_specific_error() raises:
 
 
 def test_statistics_reject_invalid_storage() raises:
-    with assert_raises(contains="at least one parameter"):
+    with assert_raises(contains="fit statistics require at least one parameter; got 0"):
         _ = FitStatistics(
             List[Float64](),
             List[Float64](),

@@ -121,7 +121,9 @@ def test_bounds_equality_accessors_and_writable_block() raises:
 
 
 def test_problem_requires_matching_strictly_feasible_initial_values() raises:
-    with assert_raises(contains="bounds have 1 parameters for 2 initial"):
+    with assert_raises(
+        contains="bounds parameter count 1 must equal initial_parameters count 2"
+    ):
         _ = LeastSquaresProblem(
             RecordingBoundsModel(),
             [0.5, 0.1],

@@ -94,13 +94,15 @@ struct LeastSquaresOptions(Copyable):
     def validate(self) raises:
         """Reject an invalid configuration, including after field mutation."""
         if not isfinite(self.loss_scale) or self.loss_scale <= 0.0:
-            raise Error("loss scale must be finite and positive")
+            raise Error(
+                String("loss_scale must be finite and positive; got ", self.loss_scale)
+            )
 
         _validate_optional_positive(self.ftol, "ftol")
         _validate_optional_positive(self.xtol, "xtol")
         _validate_optional_positive(self.gtol, "gtol")
         _validate_optional_positive(
-            self.finite_difference_step, "finite-difference step"
+            self.finite_difference_step, "finite_difference_step"
         )
         if self.x_scale:
             var x_scale = self.x_scale.value().copy()
@@ -116,23 +118,63 @@ struct LeastSquaresOptions(Copyable):
                     )
 
         if self.max_iterations <= 0:
-            raise Error("maximum iterations must be positive")
+            raise Error(
+                String("max_iterations must be positive; got ", self.max_iterations)
+            )
         if self.max_residual_evaluations <= 0:
-            raise Error("maximum residual evaluations must be positive")
+            raise Error(
+                String(
+                    "max_residual_evaluations must be positive; got ",
+                    self.max_residual_evaluations,
+                )
+            )
 
         if not isfinite(self.min_damping) or self.min_damping <= 0.0:
-            raise Error("minimum damping must be finite and positive")
+            raise Error(
+                String(
+                    "min_damping must be finite and positive; got ", self.min_damping
+                )
+            )
         if not isfinite(self.initial_damping) or self.initial_damping <= 0.0:
-            raise Error("initial damping must be finite and positive")
+            raise Error(
+                String(
+                    "initial_damping must be finite and positive; got ",
+                    self.initial_damping,
+                )
+            )
         if not isfinite(self.max_damping) or self.max_damping <= 0.0:
-            raise Error("maximum damping must be finite and positive")
+            raise Error(
+                String(
+                    "max_damping must be finite and positive; got ", self.max_damping
+                )
+            )
         if self.min_damping > self.initial_damping:
-            raise Error("minimum damping cannot exceed initial damping")
+            raise Error(
+                String(
+                    "min_damping ",
+                    self.min_damping,
+                    " cannot exceed initial_damping ",
+                    self.initial_damping,
+                )
+            )
         if self.initial_damping > self.max_damping:
-            raise Error("initial damping cannot exceed maximum damping")
+            raise Error(
+                String(
+                    "initial_damping ",
+                    self.initial_damping,
+                    " cannot exceed max_damping ",
+                    self.max_damping,
+                )
+            )
 
 
 def _validate_optional_positive(value: Optional[Float64], name: String) raises:
     if value:
         if not isfinite(value.value()) or value.value() <= 0.0:
-            raise Error(name + " must be finite and positive when enabled")
+            raise Error(
+                String(
+                    name,
+                    " must be finite and positive when enabled; got ",
+                    value.value(),
+                )
+            )

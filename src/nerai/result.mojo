@@ -117,18 +117,29 @@ struct LeastSquaresResult(Copyable, Equatable, Writable):
     def validate(self) raises:
         """Revalidate public report fields after possible caller mutation."""
         if len(self.parameters) == 0:
-            raise Error("least-squares result requires at least one parameter")
+            raise Error(
+                String(
+                    "result parameters must contain at least one parameter; got ",
+                    len(self.parameters),
+                )
+            )
         for index in range(len(self.parameters)):
             if not isfinite(self.parameters[index]):
-                raise Error("result parameters must be finite")
+                raise Error(
+                    String(
+                        "result parameters[",
+                        index,
+                        "] must be finite; got ",
+                        self.parameters[index],
+                    )
+                )
         if len(self.active_bounds) != len(self.parameters):
             raise Error(
                 String(
-                    "active_bounds has ",
+                    "active_bounds count ",
                     len(self.active_bounds),
-                    " entries for ",
+                    " must equal result parameters count ",
                     len(self.parameters),
-                    " parameters",
                 )
             )
         for index in range(len(self.active_bounds)):
@@ -142,16 +153,50 @@ struct LeastSquaresResult(Copyable, Equatable, Writable):
                     )
                 )
         if not isfinite(self.cost) or self.cost < 0.0:
-            raise Error("result cost must be finite and non-negative")
+            raise Error(
+                String("result cost must be finite and non-negative; got ", self.cost)
+            )
         if not isfinite(self.optimality) or self.optimality < 0.0:
-            raise Error("result optimality must be finite and non-negative")
+            raise Error(
+                String(
+                    "result optimality must be finite and non-negative; got ",
+                    self.optimality,
+                )
+            )
         if self.iterations < 0:
-            raise Error("iteration count must be non-negative")
+            raise Error(
+                String("iterations must be non-negative; got ", self.iterations)
+            )
         if self.residual_evaluations < 1:
-            raise Error("result requires at least one residual evaluation")
+            raise Error(
+                String(
+                    "residual_evaluations must be at least 1; got ",
+                    self.residual_evaluations,
+                )
+            )
         if self.jacobian_evaluations < 0:
-            raise Error("Jacobian evaluation count must be non-negative")
+            raise Error(
+                String(
+                    "jacobian_evaluations must be non-negative; got ",
+                    self.jacobian_evaluations,
+                )
+            )
         if self.iterations > self.residual_evaluations - 1:
-            raise Error("iteration count cannot exceed completed trials")
+            raise Error(
+                String(
+                    "iterations ",
+                    self.iterations,
+                    " cannot exceed completed trials ",
+                    self.residual_evaluations - 1,
+                    " (residual_evaluations - 1)",
+                )
+            )
         if self.jacobian_evaluations > self.residual_evaluations:
-            raise Error("Jacobian evaluations cannot exceed residual evaluations")
+            raise Error(
+                String(
+                    "jacobian_evaluations ",
+                    self.jacobian_evaluations,
+                    " cannot exceed residual_evaluations ",
+                    self.residual_evaluations,
+                )
+            )

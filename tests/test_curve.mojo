@@ -357,6 +357,11 @@ def test_gaussian_front_door_matches_scipy_and_writes_uncertainties() raises:
 def test_construction_rejects_invalid_data_and_sigma() raises:
     var two = [0.0, 1.0]
     var three = [1.0, 2.0, 3.0]
+    with assert_raises(
+        contains="initial_parameters must contain at least one parameter; got 0"
+    ):
+        _ = CurveFit(ExponentialCurve(), three, three.copy(), List[Float64]())
+
     with assert_raises(contains="t has 2 entries but y has 3 entries"):
         _ = CurveFit(ExponentialCurve(), two, three, [1.0])
 

@@ -75,7 +75,17 @@ def least_squares[
         initial_is_finite,
     )
     if not initial_is_finite:
-        raise Error("model residuals must be finite at the initial point")
+        for index in range(len(raw_residuals)):
+            if not isfinite(raw_residuals[index]):
+                raise Error(
+                    String(
+                        "model residual[",
+                        index,
+                        "] is not finite at the initial parameters; got ",
+                        raw_residuals[index],
+                        " — check the model and initial_parameters",
+                    )
+                )
 
     var initial_cost = _objective_cost(
         raw_residuals,

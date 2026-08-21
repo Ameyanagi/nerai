@@ -11,6 +11,7 @@ from nerai._kernel import _DenseMatrix
 from nerai.solve import _increase_damping, _lm_step, _update_damping
 from std.math import abs, exp
 from std.testing import TestSuite, assert_equal, assert_raises, assert_true
+from std.utils.numerics import nan
 
 
 struct AffineFitModel(Copyable, ResidualModel):
@@ -118,6 +119,17 @@ struct RaisingInitialModel(Copyable, ResidualModel):
 
     def residuals(mut self, parameters: List[Float64]) raises -> List[Float64]:
         raise Error("initial model failure")
+
+
+struct NonfiniteInitialModel(Copyable, ResidualModel):
+    def __init__(out self):
+        pass
+
+    def residual_count(self) -> Int:
+        return 2
+
+    def residuals(mut self, parameters: List[Float64]) raises -> List[Float64]:
+        return [0.0, nan[DType.float64]()]
 
 
 struct DriftingSolveModel(Copyable, ResidualModel):
@@ -399,6 +411,15 @@ def test_invalid_initial_callback_raises() raises:
     var problem = LeastSquaresProblem(RaisingInitialModel(), [0.0])
     with assert_raises(contains="initial model failure"):
         _ = least_squares(problem)
+
+    var nonfinite_problem = LeastSquaresProblem(NonfiniteInitialModel(), [0.0])
+    with assert_raises(
+        contains=(
+            "model residual[1] is not finite at the initial parameters; got nan — "
+            "check the model and initial_parameters"
+        )
+    ):
+        _ = least_squares(nonfinite_problem)
 
     var drifting_problem = LeastSquaresProblem(DriftingSolveModel(), [0.0, 0.0])
     with assert_raises(contains="changed during Jacobian evaluation"):
