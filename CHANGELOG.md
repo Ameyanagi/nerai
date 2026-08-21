@@ -18,6 +18,8 @@ and uses semantic versioning after the first public release.
 - Weighted linear, Huber, and soft-L1 objective construction for solver steps.
 - Public Levenberg-Marquardt `least_squares()` with deterministic damping,
   explicit termination, and last-valid-state result reporting.
+- Named `CurveFit` parameters with report labels and result lookup methods.
+- Scalar-broadcast, one-sided, and nonnegative `Bounds` conveniences.
 
 ### Changed
 
@@ -27,3 +29,7 @@ and uses semantic versioning after the first public release.
   returned parameters, and exact result equality includes it.
 - Weighted `CurveFit` and `fit_statistics()` calls accept `absolute_sigma=True`
   to skip reduced-chi-squared covariance rescaling.
+- Bounded initial guesses on or outside an endpoint are nudged strictly inside,
+  following SciPy, while explicit `validate()` retains the strict checkpoint.
+- **Format change:** curve-fit reports mark pinned parameter values instead of
+  printing misleading uncertainty and include active-bound lines.

@@ -6,7 +6,6 @@ Payoff: the bounded report ends with active bounds[1] marked lower.
 from nerai import Bounds, LeastSquaresProblem, ResidualModel, least_squares
 from std.collections import List
 from std.math import exp
-from std.utils.numerics import inf
 
 
 struct DecayResiduals(ResidualModel):
@@ -59,10 +58,7 @@ def main() raises:
     print(unbounded, end="")
     print("# A negative rate means nonphysical exponential growth.")
 
-    var bounds = Bounds(
-        [0.0, 0.0],
-        [inf[DType.float64](), inf[DType.float64]()],
-    )
+    var bounds = Bounds.nonnegative(2)
     var bounded_problem = LeastSquaresProblem(
         DecayResiduals(),
         [0.5, 0.1],

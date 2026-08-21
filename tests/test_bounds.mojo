@@ -62,10 +62,7 @@ struct RecordingBoundsModel(Copyable, ResidualModel):
 
 
 def positive_bounds() raises -> Bounds:
-    return Bounds(
-        [0.0, 0.0],
-        [inf[DType.float64](), inf[DType.float64]()],
-    )
+    return Bounds.nonnegative(2)
 
 
 def test_bounds_validate_endpoints_and_dimensions() raises:
@@ -101,6 +98,53 @@ def test_contains_uses_closed_intervals_and_checks_length() raises:
     assert_false(bounds.contains([nan[DType.float64](), 0.0]))
 
 
+def test_scalar_broadcasts_and_one_sided_factories() raises:
+    var scalar_lower = Bounds(lower=0.0, upper=[3.0, 1.0, 0.5])
+    assert_equal(scalar_lower.parameter_count(), 3)
+    assert_equal(scalar_lower.lower(2), 0.0)
+    assert_equal(scalar_lower.upper(2), 0.5)
+
+    var scalar_upper = Bounds(lower=[-3.0, -1.0], upper=2.0)
+    assert_equal(scalar_upper.lower(0), -3.0)
+    assert_equal(scalar_upper.upper(0), 2.0)
+    assert_equal(scalar_upper.upper(1), 2.0)
+
+    var scalar_pair = Bounds(-1.0, 1.0, parameter_count=2)
+    assert_equal(scalar_pair, Bounds([-1.0, -1.0], [1.0, 1.0]))
+
+    var lower_only = Bounds.lower_only([-2.0, 0.0])
+    assert_equal(lower_only.lower(0), -2.0)
+    assert_equal(lower_only.upper(1), inf[DType.float64]())
+
+    var upper_only = Bounds.upper_only([2.0, 4.0])
+    assert_equal(upper_only.lower(0), -inf[DType.float64]())
+    assert_equal(upper_only.upper(1), 4.0)
+
+    var nonnegative = Bounds.nonnegative(3)
+    assert_equal(nonnegative.parameter_count(), 3)
+    assert_equal(nonnegative.lower(1), 0.0)
+    assert_equal(nonnegative.upper(1), inf[DType.float64]())
+
+
+def test_broadcasts_reject_missing_parameter_counts() raises:
+    with assert_raises(contains="bounds require at least one parameter"):
+        _ = Bounds(lower=0.0, upper=List[Float64]())
+    with assert_raises(contains="bounds require at least one parameter"):
+        _ = Bounds(lower=List[Float64](), upper=1.0)
+    with assert_raises(
+        contains="parameter_count must be at least 1 for scalar bounds; got 0"
+    ):
+        _ = Bounds(0.0, 1.0, parameter_count=0)
+    with assert_raises(
+        contains="parameter_count must be at least 1 for scalar bounds; got -2"
+    ):
+        _ = Bounds.nonnegative(-2)
+    with assert_raises(contains="bounds[1] are empty"):
+        _ = Bounds(lower=0.0, upper=[1.0, -1.0])
+    with assert_raises(contains="bounds[1] are empty"):
+        _ = Bounds(lower=[-1.0, 2.0], upper=1.0)
+
+
 def test_bounds_equality_accessors_and_writable_block() raises:
     var first = Bounds([0.0, -inf[DType.float64]()], [inf[DType.float64](), 3.0])
     var same = Bounds([0.0, -inf[DType.float64]()], [inf[DType.float64](), 3.0])
@@ -120,7 +164,7 @@ def test_bounds_equality_accessors_and_writable_block() raises:
     )
 
 
-def test_problem_requires_matching_strictly_feasible_initial_values() raises:
+def test_problem_matches_bounds_and_nudges_initial_values_strictly_inside() raises:
     with assert_raises(
         contains="bounds parameter count 1 must equal initial_parameters count 2"
     ):
@@ -129,12 +173,29 @@ def test_problem_requires_matching_strictly_feasible_initial_values() raises:
             [0.5, 0.1],
             bounds=Bounds([0.0], [1.0]),
         )
-    with assert_raises(contains="initial parameter[1] 0.0"):
-        _ = LeastSquaresProblem(
-            RecordingBoundsModel(),
-            [0.5, 0.0],
-            bounds=positive_bounds(),
-        )
+    var on_bound = LeastSquaresProblem(
+        RecordingBoundsModel(),
+        [0.5, 0.0],
+        bounds=positive_bounds(),
+    )
+    assert_equal(on_bound.initial_parameters[0], 0.5)
+    assert_true(on_bound.initial_parameters[1] > 0.0)
+    assert_true(on_bound.initial_parameters[1] < 1.0e-9)
+    var on_bound_result = least_squares(on_bound)
+    assert_true(on_bound_result.converged())
+
+    var outside = LeastSquaresProblem(
+        RecordingBoundsModel(),
+        [0.5, 2.0],
+        bounds=Bounds(lower=0.0, upper=[3.0, 1.0]),
+    )
+    assert_equal(outside.initial_parameters[0], 0.5)
+    assert_true(outside.initial_parameters[1] < 1.0)
+    assert_true(outside.initial_parameters[1] > 1.0 - 1.0e-9)
+
+    outside.initial_parameters[1] = 1.0
+    with assert_raises(contains="initial parameter[1] 1.0 is not strictly inside"):
+        outside.validate()
 
 
 def test_bounded_fit_is_strictly_feasible_and_reports_active_rate() raises:

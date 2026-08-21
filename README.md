@@ -74,7 +74,13 @@ def main() raises:
              0.1540282248418524, 0.126041297379791,
              0.08288007873970038, 0.16218689287408977,
              0.07961970944963043, 0.05407706744764089]
-    var fit = CurveFit(Decay(), t, y, [1.0, 1.0])
+    var fit = CurveFit(
+        Decay(),
+        t,
+        y,
+        [1.0, 1.0],
+        parameter_names=["amplitude", "rate"],
+    )
     print(fit.solve(), end="")
 ```
 
@@ -89,14 +95,11 @@ optimality            5.484938620439154e-07
 iterations            19
 residual evaluations  40
 jacobian evaluations  10
-parameters[0]         2.487 +/- 0.028
-parameters[1]         0.699 +/- 0.012
+amplitude             2.487 +/- 0.028
+rate                  0.699 +/- 0.012
 degrees of freedom    23
 reduced chi-squared   0.0017814213127856553
 ```
-
-`parameters[0]` is amplitude; its payoff line is
-`amplitude 2.487 +/- 0.028`.
 
 Pass solver options inline, such as `options=LeastSquaresOptions(loss=...)`, or
 transfer an existing variable with `options=options^`. Plain `options=options`
@@ -125,6 +128,9 @@ Cost is the robust objective value including the one-half factor:
 `0.5 * sum(rho-scaled squared weighted residuals)`. For linear loss this is
 exactly `0.5 * sum((w_i * r_i)^2)`. Optimality is the infinity norm of the
 gradient.
+
+An initial guess on or outside a bound is nudged strictly inside, following
+SciPy.
 
 Covariance is `(J^T W J)^-1 * reduced_chi_squared`, with degrees of freedom
 `m_effective - n`; this follows SciPy `curve_fit(..., absolute_sigma=False)`

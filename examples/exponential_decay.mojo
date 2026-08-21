@@ -77,6 +77,12 @@ def main() raises:
         0.07961970944963043,
         0.05407706744764089,
     ]
-    var fit = CurveFit(ExponentialDecay(), t, y, [1.0, 1.0])
+    var fit = CurveFit(
+        ExponentialDecay(),
+        t,
+        y,
+        [1.0, 1.0],
+        parameter_names=["amplitude", "rate"],
+    )
 
     print(fit.solve(), end="")

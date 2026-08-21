@@ -378,6 +378,45 @@ def test_report_rounding_examples_and_fallback_are_exact() raises:
     assert_equal(String(report), expected)
 
 
+def test_report_uses_names_and_marks_active_bounds_without_uncertainty() raises:
+    var result = LeastSquaresResult(
+        [2.4873608, 1.0],
+        cost=0.125,
+        optimality=0.25,
+        iterations=0,
+        residual_evaluations=1,
+        jacobian_evaluations=0,
+        termination=TerminationReason.GRADIENT_TOLERANCE,
+        active_bounds=Optional[List[Int]]([0, 1]),
+    )
+    var statistics = FitStatistics(
+        [1.0, 0.0, 0.0, 1.0],
+        [0.0282163, 0.5],
+        degrees_of_freedom=3,
+        reduced_chi_squared=0.125,
+    )
+    var report = FitReport(
+        result,
+        statistics,
+        parameter_names=["a_parameter_name_longer_than_22_bytes", "rate"],
+    )
+    var expected = String(
+        "termination           gradient tolerance\n",
+        "converged             yes\n",
+        "cost                  0.125\n",
+        "optimality            0.25\n",
+        "iterations            0\n",
+        "residual evaluations  1\n",
+        "jacobian evaluations  0\n",
+        "a_parameter_name_longer_than_22_bytes  2.487 +/- 0.028\n",
+        "rate                  1.0 (at upper bound)\n",
+        "active bounds[1]      upper\n",
+        "degrees of freedom    3\n",
+        "reduced chi-squared   0.125\n",
+    )
+    assert_equal(String(report), expected)
+
+
 def test_result_and_statistics_parameter_counts_must_match() raises:
     var result = make_result([1.0])
     var statistics = FitStatistics(

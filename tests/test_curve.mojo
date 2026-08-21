@@ -1,5 +1,13 @@
-from nerai import Bounds, CurveFit, CurveModel, FitReport, LeastSquaresOptions
-from std.collections import List
+from nerai import (
+    Bounds,
+    CurveFit,
+    CurveFitResult,
+    CurveModel,
+    FitReport,
+    FitStatistics,
+    LeastSquaresOptions,
+)
+from std.collections import List, Optional
 from std.math import abs, exp, sqrt
 from std.testing import TestSuite, assert_equal, assert_raises, assert_true
 from std.utils.numerics import inf, nan
@@ -295,7 +303,13 @@ def assert_relative_close(
 def test_exponential_front_door_matches_scipy() raises:
     var t = decay_t()
     var y = decay_y()
-    var fit = CurveFit(ExponentialCurve(), t, y, [1.0, 1.0])
+    var fit = CurveFit(
+        ExponentialCurve(),
+        t,
+        y,
+        [1.0, 1.0],
+        parameter_names=["amplitude", "rate"],
+    )
     var result = fit.solve()
 
     assert_true(result.result.converged())
@@ -306,6 +320,20 @@ def test_exponential_front_door_matches_scipy() raises:
     assert_relative_close(statistics.standard_error(1), 0.012206596202510621, 5.0e-3)
     assert_equal(statistics.degrees_of_freedom, 23)
     assert_equal(result.statistics_message, "")
+    assert_equal(result.parameter("amplitude"), result.result.parameters[0])
+    assert_equal(
+        result.standard_error("rate"),
+        statistics.standard_error(1),
+    )
+    assert_true("amplitude             2.487 +/- 0.028\n" in String(result))
+    assert_true("rate                  0.699 +/- 0.012\n" in String(result))
+    with assert_raises(
+        contains=(
+            'name argument must match one of parameter_names; got "speed"; '
+            'valid names are ["amplitude", "rate"]'
+        )
+    ):
+        _ = result.parameter("speed")
 
     var residuals = result.residuals()
     assert_equal(len(residuals), 25)
@@ -416,7 +444,13 @@ def test_gaussian_front_door_matches_scipy_and_writes_uncertainties() raises:
 def test_rank_deficient_fit_returns_parameters_without_statistics() raises:
     var t = [1.0, 2.0, 3.0, 4.0]
     var y = [2.0, 4.0, 6.0, 8.0]
-    var fit = CurveFit(DegenerateCurve(), t, y, [0.5, 0.5])
+    var fit = CurveFit(
+        DegenerateCurve(),
+        t,
+        y,
+        [0.5, 0.5],
+        parameter_names=["slope", "unused"],
+    )
     var result = fit.solve()
 
     assert_true(result.result.converged())
@@ -424,6 +458,9 @@ def test_rank_deficient_fit_returns_parameters_without_statistics() raises:
     assert_true(
         "Jacobian is rank-deficient at the solution" in result.statistics_message
     )
+    assert_equal(result.parameter("slope"), result.result.parameters[0])
+    with assert_raises(contains="Jacobian is rank-deficient at the solution"):
+        _ = result.standard_error("slope")
     var report = String(result)
     assert_true(not (" +/- " in report))
     assert_true(
@@ -467,6 +504,29 @@ def test_construction_rejects_invalid_data_and_sigma() raises:
 
     with assert_raises(contains="t has 2 entries but y has 3 entries"):
         _ = CurveFit(ExponentialCurve(), two, three, [1.0])
+
+    with assert_raises(
+        contains="parameter_names has 1 entries but initial_parameters has 2 entries"
+    ):
+        _ = CurveFit(
+            ExponentialCurve(),
+            three,
+            three.copy(),
+            [1.0, 1.0],
+            parameter_names=["amplitude"],
+        )
+    with assert_raises(
+        contains="parameter_names[1] must not be empty; got an empty string"
+    ):
+        var sigma = [0.1, 0.1, 0.1]
+        _ = CurveFit(
+            ExponentialCurve(),
+            three,
+            three.copy(),
+            [1.0, 1.0],
+            sigma=sigma,
+            parameter_names=["amplitude", ""],
+        )
 
     var nonfinite_y = [1.0, nan[DType.float64](), 2.0]
     with assert_raises(contains="y[1] must be finite"):
@@ -512,12 +572,32 @@ def test_bounded_front_door_reports_active_rate() raises:
         [0.0, 0.0],
         [inf[DType.float64](), inf[DType.float64]()],
     )
-    var fit = CurveFit(ExponentialCurve(), t, y, [0.5, 0.1], bounds=bounds.copy())
+    var fit = CurveFit(
+        ExponentialCurve(),
+        t,
+        y,
+        [0.5, 0.1],
+        parameter_names=["amplitude", "rate"],
+        bounds=bounds.copy(),
+    )
     var result = fit.solve()
 
     assert_true(result.result.parameters[1] >= 0.0)
     assert_true(result.result.parameters[1] <= 1.0e-6)
     assert_equal(result.result.active_bounds, [0, -1])
+    assert_true("rate                  " in String(result))
+    assert_true(" (at lower bound)\n" in String(result))
+    assert_true("active bounds[1]      lower\n" in String(result))
+
+    var no_statistics = CurveFitResult(
+        result.result,
+        Optional[FitStatistics](),
+        statistics_message="synthetic unavailable statistics",
+        parameter_names=["amplitude", "rate"],
+    )
+    assert_true("rate                  " in String(no_statistics))
+    assert_true(" (at lower bound)\n" in String(no_statistics))
+    assert_true("active bounds[1]      lower\n" in String(no_statistics))
 
 
 def test_repeated_solves_are_exactly_deterministic() raises:

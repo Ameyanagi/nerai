@@ -1,6 +1,7 @@
 """Statically dispatched residual-model and least-squares problem contracts."""
 
 from std.collections import Optional
+from std.math import abs
 from std.utils.numerics import isfinite
 
 from .bounds import Bounds
@@ -34,7 +35,8 @@ struct LeastSquaresProblem[M: ResidualModel](Movable):
     The residual count must be at least the number of parameters. Weights are
     finite and non-negative with at least one positive entry; omitting weights
     creates one unit weight per residual. Optional box bounds must match the
-    parameter count, and initial parameters must be strictly inside them.
+    parameter count. Initial parameters on or outside a bound are nudged to the
+    nearest strictly interior point during construction, following SciPy.
     Public fields support ordinary Mojo value use, and every evaluation
     revalidates them before invoking the model. Coherent direct mutation is
     explicit reconfiguration between evaluations.
@@ -118,6 +120,34 @@ struct LeastSquaresProblem[M: ResidualModel](Movable):
         else:
             self.options = LeastSquaresOptions()
         self.bounds = bounds.copy()
+        if self.bounds:
+            var validated_bounds = self.bounds.value().copy()
+            validated_bounds.validate()
+            if validated_bounds.parameter_count() != len(self.initial_parameters):
+                raise Error(
+                    String(
+                        "bounds parameter count ",
+                        validated_bounds.parameter_count(),
+                        " must equal initial_parameters count ",
+                        len(self.initial_parameters),
+                    )
+                )
+            for index in range(len(self.initial_parameters)):
+                var parameter = self.initial_parameters[index]
+                if parameter <= validated_bounds.lower(index):
+                    var lower = validated_bounds.lower(index)
+                    var delta = min(
+                        1.0e-10 * max(1.0, abs(lower)),
+                        0.5 * (validated_bounds.upper(index) - lower),
+                    )
+                    self.initial_parameters[index] = lower + delta
+                elif parameter >= validated_bounds.upper(index):
+                    var upper = validated_bounds.upper(index)
+                    var delta = min(
+                        1.0e-10 * max(1.0, abs(upper)),
+                        0.5 * (upper - validated_bounds.lower(index)),
+                    )
+                    self.initial_parameters[index] = upper - delta
         self.validate()
 
     def validate(self) raises:
