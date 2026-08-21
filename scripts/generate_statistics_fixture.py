@@ -27,3 +27,11 @@ print("pcov =", [float(v) for v in pcov.ravel()])
 print("perr =", [float(v) for v in np.sqrt(np.diag(pcov))])
 print("reduced_chi2 =", float(residuals @ residuals) / dof)
 print("dof =", dof)
+
+sigma = np.linspace(0.03, 0.08, t.size)
+popt_w, pcov_w = curve_fit(
+    model, t, y, p0=[1.0, 1.0], sigma=sigma, absolute_sigma=False
+)
+print("sigma =", [float(v) for v in sigma])
+print("weighted popt =", [float(v) for v in popt_w])
+print("weighted perr =", [float(v) for v in np.sqrt(np.diag(pcov_w))])
