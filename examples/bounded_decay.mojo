@@ -9,7 +9,7 @@ from std.math import exp
 from std.utils.numerics import inf
 
 
-struct DecayResiduals(Copyable, ResidualModel):
+struct DecayResiduals(ResidualModel):
     def __init__(out self):
         pass
 

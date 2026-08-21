@@ -4,6 +4,34 @@
 
 Optimization and nonlinear least squares for Mojo.
 
+## Install
+
+The package is not published yet, but the consumer install path for a
+[Pixi](https://pixi.sh/) project is to add the Nerai channel to
+`[workspace].channels` in `pixi.toml`:
+
+```toml
+[workspace]
+channels = ["https://ameyanagi.github.io/mojo-channel", "conda-forge"]
+```
+
+Then add the package:
+
+```sh
+pixi add mojo-nerai
+```
+
+Alternatively, run Nerai from a source checkout:
+
+```sh
+git clone https://github.com/Ameyanagi/nerai.git
+cd nerai
+pixi install --locked
+```
+
+Save your program in the checkout as `your_fit.mojo`, then run it with
+`pixi run mojo run -I src your_fit.mojo`.
+
 ## Quickstart
 
 Define the curve itself; `CurveFit` builds residuals, solves, and estimates
@@ -14,7 +42,8 @@ from nerai import CurveFit, CurveModel
 from std.collections import List
 from std.math import exp
 
-struct Decay(Copyable, CurveModel):
+struct Decay(CurveModel):
+    # This empty initializer is required Mojo boilerplate for a fieldless struct.
     def __init__(out self):
         pass
 
@@ -49,6 +78,9 @@ def main() raises:
     print(fit.solve(), end="")
 ```
 
+Save this quickstart as `fit.mojo` in a checkout and run
+`pixi run mojo run -I src fit.mojo`.
+
 ```text
 termination           cost tolerance
 converged             yes
@@ -64,8 +96,19 @@ reduced chi-squared   0.0017814213127856553
 ```
 
 `parameters[0]` is amplitude; its payoff line is
-`amplitude 2.487 +/- 0.028`. The complete executable version is
-[`examples/exponential_decay.mojo`](examples/exponential_decay.mojo).
+`amplitude 2.487 +/- 0.028`.
+
+Pass solver options inline, such as `options=LeastSquaresOptions(loss=...)`, or
+transfer an existing variable with `options=options^`. Plain `options=options`
+cannot be implicitly copied.
+
+## Examples
+
+The task-focused examples are
+[`exponential_decay.mojo`](examples/exponential_decay.mojo),
+[`gaussian_peak.mojo`](examples/gaussian_peak.mojo), and
+[`bounded_decay.mojo`](examples/bounded_decay.mojo). The last one uses the raw
+problem API to contrast an unbounded fit with a physically bounded fit.
 
 ## Scope
 
@@ -91,19 +134,12 @@ semantics.
 
 ## Development
 
-Install [Pixi](https://pixi.sh/), then run:
+From a source checkout, run:
 
 ```sh
-pixi install --locked
 pixi run check
 pixi run example
 ```
-
-The task-focused examples are
-[`exponential_decay.mojo`](examples/exponential_decay.mojo),
-[`gaussian_peak.mojo`](examples/gaussian_peak.mojo), and
-[`bounded_decay.mojo`](examples/bounded_decay.mojo). The last one uses the raw
-problem API to contrast an unbounded fit with a physically bounded fit.
 
 The exact stable Mojo compiler and all development dependencies are captured in
 `pixi.lock`. Runtime and library code is Mojo-first and pure Mojo wherever

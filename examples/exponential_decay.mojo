@@ -8,7 +8,7 @@ from std.collections import List
 from std.math import exp
 
 
-struct ExponentialDecay(Copyable, CurveModel):
+struct ExponentialDecay(CurveModel):
     def __init__(out self):
         pass
 
