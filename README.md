@@ -4,13 +4,90 @@
 
 Optimization and nonlinear least squares for Mojo.
 
+## Quickstart
+
+Define the curve itself; `CurveFit` builds residuals, solves, and estimates
+uncertainty:
+
+```mojo
+from nerai import CurveFit, CurveModel
+from std.collections import List
+from std.math import exp
+
+struct Decay(Copyable, CurveModel):
+    def __init__(out self):
+        pass
+
+    def values(
+        mut self, p: List[Float64], t: Span[Float64, ...]
+    ) raises -> List[Float64]:
+        var y = List[Float64](length=len(t), fill=0.0)
+        for i in range(len(t)):
+            y[i] = p[0] * exp(-p[1] * t[i])
+        return y^
+
+def main() raises:
+    var t = [0.0, 0.20833333333333334, 0.4166666666666667, 0.625,
+             0.8333333333333334, 1.0416666666666667, 1.25,
+             1.4583333333333335, 1.6666666666666667, 1.875,
+             2.0833333333333335, 2.291666666666667, 2.5,
+             2.7083333333333335, 2.916666666666667, 3.125,
+             3.3333333333333335, 3.541666666666667, 3.75,
+             3.9583333333333335, 4.166666666666667, 4.375,
+             4.583333333333334, 4.791666666666667, 5.0]
+    var y = [2.5152358539877215, 2.1087551483663853, 1.9050663105664043,
+             1.6611495518892907, 1.2975361049924259, 1.1406678953850795,
+             1.0485470693546353, 0.8849242942863328, 0.7776680019112797,
+             0.6302136754442806, 0.6255290435363732, 0.5415321783848346,
+             0.43773639350417365, 0.4318448652148168, 0.34790590925119713,
+             0.23752760315669744, 0.26086745886513757,
+             0.16158847170632618, 0.22502190765099225,
+             0.1540282248418524, 0.126041297379791,
+             0.08288007873970038, 0.16218689287408977,
+             0.07961970944963043, 0.05407706744764089]
+    var fit = CurveFit(Decay(), t, y, [1.0, 1.0])
+    print(fit.solve(), end="")
+```
+
+```text
+termination           cost tolerance
+converged             yes
+cost                  0.020486345097035032
+optimality            5.484938620439154e-07
+iterations            19
+residual evaluations  40
+jacobian evaluations  10
+parameters[0]         2.487 +/- 0.028
+parameters[1]         0.699 +/- 0.012
+degrees of freedom    23
+reduced chi-squared   0.0017814213127856553
+```
+
+`parameters[0]` is amplitude; its payoff line is
+`amplitude 2.487 +/- 0.028`. The complete executable version is
+[`examples/exponential_decay.mojo`](examples/exponential_decay.mojo).
+
 ## Scope
 
-Nerai begins with explicit, inspectable nonlinear least-squares contracts instead of attempting a broad SciPy.optimize clone.
+Nerai provides dense `Float64` nonlinear least squares with forward or central
+finite-difference Jacobians, observation weights, linear and robust losses,
+parameter scaling, box bounds, explicit termination reports, and post-fit
+covariance estimates. `CurveFit` is the data-fitting front door;
+`LeastSquaresProblem` and `least_squares()` remain the expert residual-model
+API. See the [issue-sized v0.1 implementation plan](docs/implementation-plan.md).
 
-The first implementation milestone is intentionally narrow: implement Levenberg-Marquardt, finite-difference Jacobians, weighted residuals, robust losses, covariance estimates, and explicit termination reporting.
-The project is independently installable and does not require any application
-from the wider ecosystem.
+### Conventions
+
+Cost is the robust objective value including the one-half factor:
+`0.5 * sum(rho-scaled squared weighted residuals)`. For linear loss this is
+exactly `0.5 * sum((w_i * r_i)^2)`. Optimality is the infinity norm of the
+gradient.
+
+Covariance is `(J^T W J)^-1 * reduced_chi_squared`, with degrees of freedom
+`m_effective - n`; this follows SciPy `curve_fit(..., absolute_sigma=False)`
+semantics. Weights multiply residuals once. On the `CurveFit` front door,
+`sigma` maps to `w_i = 1 / sigma_i` with `absolute_sigma=False` covariance
+semantics.
 
 ## Development
 
@@ -21,6 +98,12 @@ pixi install --locked
 pixi run check
 pixi run example
 ```
+
+The task-focused examples are
+[`exponential_decay.mojo`](examples/exponential_decay.mojo),
+[`gaussian_peak.mojo`](examples/gaussian_peak.mojo), and
+[`bounded_decay.mojo`](examples/bounded_decay.mojo). The last one uses the raw
+problem API to contrast an unbounded fit with a physically bounded fit.
 
 The exact stable Mojo compiler and all development dependencies are captured in
 `pixi.lock`. Runtime and library code is Mojo-first and pure Mojo wherever
@@ -34,8 +117,9 @@ The Mojo import is `nerai`. The eventual Conda distribution is
 `mojo-nerai`. Source lives under `src/nerai/`, whose
 `__init__.mojo` defines the package boundary.
 
-The current scaffold includes only an internal smoke marker. Nothing is
-re-exported as a stable public API yet.
+The experimental root exports both curve-fitting and expert least-squares APIs.
+They are tested but do not carry a source-compatibility promise before the
+first release.
 
 ## Repository map
 

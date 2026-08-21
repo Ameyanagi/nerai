@@ -1,5 +1,35 @@
-from nerai._scaffold import scaffold_name
+from nerai import (
+    LeastSquaresProblem,
+    ResidualModel,
+    least_squares,
+)
+from std.math import exp
 
 
-def main():
-    print(scaffold_name(), "is an experimental scaffold; no API is released yet.")
+struct ExponentialDecayModel(Copyable, ResidualModel):
+    def __init__(out self):
+        pass
+
+    def residual_count(self) -> Int:
+        return 6
+
+    def residuals(mut self, parameters: List[Float64]) raises -> List[Float64]:
+        var amplitude = parameters[0]
+        var rate = parameters[1]
+        # Exact observations follow y(t)=2.5*exp(-0.7*t) at
+        # t=[0, 0.5, 1, 1.5, 2, 2.5].
+        return [
+            amplitude - 2.5,
+            amplitude * exp(-0.5 * rate) - 2.5 * exp(-0.35),
+            amplitude * exp(-rate) - 2.5 * exp(-0.7),
+            amplitude * exp(-1.5 * rate) - 2.5 * exp(-1.05),
+            amplitude * exp(-2.0 * rate) - 2.5 * exp(-1.4),
+            amplitude * exp(-2.5 * rate) - 2.5 * exp(-1.75),
+        ]
+
+
+def main() raises:
+    var problem = LeastSquaresProblem(ExponentialDecayModel(), [1.5, 0.3])
+    var result = least_squares(problem)
+
+    print(result, end="")
