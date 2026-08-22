@@ -1,4 +1,7 @@
 from nerai import (
+    Bounds,
+    CurveFit,
+    CurveModel,
     LeastSquaresResult,
     LeastSquaresOptions,
     LeastSquaresProblem,
@@ -9,7 +12,22 @@ from nerai import (
     least_squares,
     robust_cost,
 )
+from std.collections import List
+from std.math import abs
 from std.testing import assert_false, assert_true
+
+
+struct InstalledCurve(CurveModel):
+    def __init__(out self):
+        pass
+
+    def values(
+        mut self, parameters: List[Float64], t: Span[Float64, ...]
+    ) raises -> List[Float64]:
+        var values = List[Float64](length=len(t), fill=0.0)
+        for index in range(len(t)):
+            values[index] = parameters[0] * t[index] + parameters[1]
+        return values^
 
 
 struct InstalledModel(ResidualModel):
@@ -59,3 +77,19 @@ def main() raises:
     assert_true(fitted.converged())
     assert_true(fitted.parameters[0] == 1.0)
     assert_true(fitted.parameters[1] == -2.0)
+
+    var t: List[Float64] = [0.0, 1.0, 2.0, 3.0]
+    var y: List[Float64] = [1.0, 3.0, 5.0, 7.0]
+    var curve = CurveFit(
+        InstalledCurve(),
+        t,
+        y,
+        [1.5, 0.5],
+        parameter_names=["slope", "intercept"],
+        bounds=Bounds.nonnegative(2),
+    )
+    var curve_result = curve.solve()
+    assert_true(curve_result.result.converged())
+    assert_true(abs(curve_result.parameter("slope") - 2.0) <= 1.0e-8)
+    assert_true(abs(curve_result.parameter("intercept") - 1.0) <= 1.0e-8)
+    assert_true(len(curve_result.residuals()) == 4)
