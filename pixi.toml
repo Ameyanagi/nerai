@@ -3,7 +3,7 @@ authors = ["Ameyanagi <contact@ameyanagi.com>"]
 channels = ["https://conda.modular.com/max", "conda-forge"]
 name = "nerai"
 platforms = ["osx-arm64", "linux-64", "linux-aarch64"]
-version = "0.0.0"
+version = "0.1.0"
 
 [tasks]
 bench = { cmd = "bash scripts/benchmark-least-squares.sh", description = "Run compiled least-squares latency benchmarks" }

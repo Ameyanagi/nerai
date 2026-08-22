@@ -5,6 +5,8 @@ and uses semantic versioning after the first public release.
 
 ## [Unreleased]
 
+## [0.1.0] - 2026-08-22
+
 ### Added
 
 - Initial experimental repository scaffold.
@@ -45,3 +47,6 @@ and uses semantic versioning after the first public release.
   including a signed inward step one ULP below an upper endpoint.
 - Exact zero-residual fits now produce valid zero covariance and standard errors;
   correlation raises explicitly because normalization by zero is undefined.
+
+[Unreleased]: https://github.com/Ameyanagi/nerai/compare/v0.1.0...HEAD
+[0.1.0]: https://github.com/Ameyanagi/nerai/releases/tag/v0.1.0

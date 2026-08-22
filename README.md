@@ -1,13 +1,12 @@
 # Nerai
 
-> **Experimental — API not yet released.**
+> **Pre-1.0 — minor releases may change source compatibility.**
 
 Optimization and nonlinear least squares for Mojo.
 
 ## Install
 
-The package is not published yet, but the consumer install path for a
-[Pixi](https://pixi.sh/) project is to add the Nerai channel to
+For a [Pixi](https://pixi.sh/) project, add the Nerai channel to
 `[workspace].channels` in `pixi.toml`:
 
 ```toml
@@ -164,13 +163,12 @@ documented.
 
 ## Package
 
-The Mojo import is `nerai`. The eventual Conda distribution is
+The Mojo import is `nerai`. The Conda distribution is
 `mojo-nerai`. Source lives under `src/nerai/`, whose
 `__init__.mojo` defines the package boundary.
 
-The experimental root exports both curve-fitting and expert least-squares APIs.
-They are tested but do not carry a source-compatibility promise before the
-first release.
+The `0.x` root exports both curve-fitting and expert least-squares APIs. They are
+tested, but minor releases may change source compatibility before 1.0.
 
 ## Repository map
 

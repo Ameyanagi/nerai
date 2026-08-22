@@ -17,8 +17,8 @@ events and require the full locked test suite.
 | Windows/WSL | Not yet supported or tested |
 | GPU | Not supported unless explicitly listed in the roadmap |
 
-The repository is experimental and has no source-compatibility promise before
-its first release. Each release names the exact compiler used to build it.
+The `0.x` series is experimental and does not promise source compatibility
+between minor releases. Each release names the exact compiler used to build it.
 
 ## Mojo 1.0 public-field limitation
 
