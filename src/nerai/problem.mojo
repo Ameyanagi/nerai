@@ -1,6 +1,7 @@
 """Statically dispatched residual-model and least-squares problem contracts."""
 
 from std.collections import Optional
+from std.math import abs
 from std.utils.numerics import isfinite
 
 from .bounds import Bounds
@@ -34,7 +35,8 @@ struct LeastSquaresProblem[M: ResidualModel](Movable):
     The residual count must be at least the number of parameters. Weights are
     finite and non-negative with at least one positive entry; omitting weights
     creates one unit weight per residual. Optional box bounds must match the
-    parameter count, and initial parameters must be strictly inside them.
+    parameter count. Initial parameters on or outside a bound are nudged to the
+    nearest strictly interior point during construction, following SciPy.
     Public fields support ordinary Mojo value use, and every evaluation
     revalidates them before invoking the model. Coherent direct mutation is
     explicit reconfiguration between evaluations.
@@ -89,10 +91,23 @@ struct LeastSquaresProblem[M: ResidualModel](Movable):
         options: Optional[LeastSquaresOptions] = None,
         bounds: Optional[Bounds] = None,
     ) raises:
-        _validate_parameters(initial_parameters)
+        _validate_parameters(initial_parameters, "initial_parameters")
         var residual_count = model.residual_count()
         if residual_count < len(initial_parameters):
-            raise Error("residual count must be at least the parameter count")
+            raise Error(
+                String(
+                    "model declares ",
+                    residual_count,
+                    " residual" if residual_count == 1 else " residuals",
+                    " for ",
+                    len(initial_parameters),
+                    (" parameter" if len(initial_parameters) == 1 else " parameters"),
+                    (
+                        "; a least-squares problem needs at least as "
+                        "many residuals as parameters"
+                    ),
+                )
+            )
         self.model = model^
         self.initial_parameters = initial_parameters.copy()
         if _weights:
@@ -105,12 +120,40 @@ struct LeastSquaresProblem[M: ResidualModel](Movable):
         else:
             self.options = LeastSquaresOptions()
         self.bounds = bounds.copy()
+        if self.bounds:
+            var validated_bounds = self.bounds.value().copy()
+            validated_bounds.validate()
+            if validated_bounds.parameter_count() != len(self.initial_parameters):
+                raise Error(
+                    String(
+                        "bounds parameter count ",
+                        validated_bounds.parameter_count(),
+                        " must equal initial_parameters count ",
+                        len(self.initial_parameters),
+                    )
+                )
+            for index in range(len(self.initial_parameters)):
+                var parameter = self.initial_parameters[index]
+                if parameter <= validated_bounds.lower(index):
+                    var lower = validated_bounds.lower(index)
+                    var delta = min(
+                        1.0e-10 * max(1.0, abs(lower)),
+                        0.5 * (validated_bounds.upper(index) - lower),
+                    )
+                    self.initial_parameters[index] = lower + delta
+                elif parameter >= validated_bounds.upper(index):
+                    var upper = validated_bounds.upper(index)
+                    var delta = min(
+                        1.0e-10 * max(1.0, abs(upper)),
+                        0.5 * (upper - validated_bounds.lower(index)),
+                    )
+                    self.initial_parameters[index] = upper - delta
         self.validate()
 
     def validate(self) raises:
         """Revalidate all reachable problem state without calling the model."""
         self.options.validate()
-        _validate_parameters(self.initial_parameters)
+        _validate_parameters(self.initial_parameters, "initial_parameters")
 
         if self.options.x_scale:
             var x_scale_count = len(self.options.x_scale.value())
@@ -131,11 +174,10 @@ struct LeastSquaresProblem[M: ResidualModel](Movable):
             if bounds.parameter_count() != len(self.initial_parameters):
                 raise Error(
                     String(
-                        "bounds have ",
+                        "bounds parameter count ",
                         bounds.parameter_count(),
-                        " parameters for ",
+                        " must equal initial_parameters count ",
                         len(self.initial_parameters),
-                        " initial parameters",
                     )
                 )
             for index in range(len(self.initial_parameters)):
@@ -156,21 +198,60 @@ struct LeastSquaresProblem[M: ResidualModel](Movable):
                     )
 
         if self.residual_count < len(self.initial_parameters):
-            raise Error("residual count must be at least the parameter count")
+            raise Error(
+                String(
+                    "model declares ",
+                    self.residual_count,
+                    (" residual" if self.residual_count == 1 else " residuals"),
+                    " for ",
+                    len(self.initial_parameters),
+                    (
+                        " parameter" if len(self.initial_parameters)
+                        == 1 else " parameters"
+                    ),
+                    (
+                        "; a least-squares problem needs at least as "
+                        "many residuals as parameters"
+                    ),
+                )
+            )
         if self.model.residual_count() != self.residual_count:
-            raise Error("model residual count must match the problem configuration")
+            raise Error(
+                String(
+                    "model residual_count ",
+                    self.model.residual_count(),
+                    " must match problem residual_count ",
+                    self.residual_count,
+                )
+            )
         if len(self.weights) != self.residual_count:
-            raise Error("weight count must equal the residual count")
+            raise Error(
+                String(
+                    "weights count ",
+                    len(self.weights),
+                    " must equal residual_count ",
+                    self.residual_count,
+                )
+            )
 
         var any_positive = False
         for index in range(len(self.weights)):
             var weight = self.weights[index]
             if not isfinite(weight) or weight < 0.0:
-                raise Error("weights must be finite and non-negative")
+                raise Error(
+                    String(
+                        "weights[",
+                        index,
+                        "] must be finite and non-negative; got ",
+                        weight,
+                    )
+                )
             if weight > 0.0:
                 any_positive = True
         if not any_positive:
-            raise Error("at least one weight must be positive")
+            raise Error(
+                "weights must include at least one positive entry; got all zeros"
+            )
 
     def evaluate_initial_residuals(mut self) raises -> List[Float64]:
         """Evaluate the model at the problem's validated initial parameters."""
@@ -186,25 +267,63 @@ struct LeastSquaresProblem[M: ResidualModel](Movable):
         values.
         """
         self.validate()
-        _validate_parameters(parameters)
+        _validate_parameters(parameters, "parameters")
         if len(parameters) != len(self.initial_parameters):
-            raise Error("parameter count must match the initial parameter count")
+            raise Error(
+                String(
+                    "parameters count ",
+                    len(parameters),
+                    " must equal initial_parameters count ",
+                    len(self.initial_parameters),
+                )
+            )
 
         var entry_residual_count = self.residual_count
         var residuals = self.model.residuals(parameters)
         if self.model.residual_count() != entry_residual_count:
-            raise Error("model residual count changed during residual evaluation")
+            raise Error(
+                String(
+                    "model residual_count changed during residual evaluation; got ",
+                    self.model.residual_count(),
+                    " after entering with ",
+                    entry_residual_count,
+                )
+            )
         if len(residuals) != entry_residual_count:
-            raise Error("model returned an unexpected residual count")
+            raise Error(
+                String(
+                    "model returned a residual vector of length ",
+                    len(residuals),
+                    "; expected length ",
+                    entry_residual_count,
+                )
+            )
         for index in range(len(residuals)):
             if not isfinite(residuals[index]):
-                raise Error("model residuals must be finite")
+                raise Error(
+                    String(
+                        "model residuals[",
+                        index,
+                        "] must be finite; got ",
+                        residuals[index],
+                    )
+                )
         return residuals^
 
 
-def _validate_parameters(parameters: List[Float64]) raises:
+def _validate_parameters(parameters: List[Float64], name: String) raises:
     if len(parameters) == 0:
-        raise Error("least-squares problems require at least one parameter")
+        raise Error(
+            String(name, " must contain at least one parameter; got ", len(parameters))
+        )
     for index in range(len(parameters)):
         if not isfinite(parameters[index]):
-            raise Error("parameters must be finite")
+            raise Error(
+                String(
+                    name,
+                    "[",
+                    index,
+                    "] must be finite; got ",
+                    parameters[index],
+                )
+            )

@@ -6,6 +6,7 @@ from nerai import (
 )
 from std.collections import List
 from std.math import abs, exp
+from std.memory import bitcast
 from std.testing import (
     TestSuite,
     assert_equal,
@@ -61,11 +62,21 @@ struct RecordingBoundsModel(Copyable, ResidualModel):
         return residuals^
 
 
+struct OpenUnitDomainModel(Copyable, ResidualModel):
+    def __init__(out self):
+        pass
+
+    def residual_count(self) -> Int:
+        return 2
+
+    def residuals(mut self, parameters: List[Float64]) raises -> List[Float64]:
+        if parameters[0] <= 0.0 or parameters[0] >= 1.0:
+            raise Error("solver evaluated outside the open bounded domain")
+        return [parameters[0] - 0.25, 2.0 * parameters[0] - 0.5]
+
+
 def positive_bounds() raises -> Bounds:
-    return Bounds(
-        [0.0, 0.0],
-        [inf[DType.float64](), inf[DType.float64]()],
-    )
+    return Bounds.nonnegative(2)
 
 
 def test_bounds_validate_endpoints_and_dimensions() raises:
@@ -101,6 +112,53 @@ def test_contains_uses_closed_intervals_and_checks_length() raises:
     assert_false(bounds.contains([nan[DType.float64](), 0.0]))
 
 
+def test_scalar_broadcasts_and_one_sided_factories() raises:
+    var scalar_lower = Bounds(lower=0.0, upper=[3.0, 1.0, 0.5])
+    assert_equal(scalar_lower.parameter_count(), 3)
+    assert_equal(scalar_lower.lower(2), 0.0)
+    assert_equal(scalar_lower.upper(2), 0.5)
+
+    var scalar_upper = Bounds(lower=[-3.0, -1.0], upper=2.0)
+    assert_equal(scalar_upper.lower(0), -3.0)
+    assert_equal(scalar_upper.upper(0), 2.0)
+    assert_equal(scalar_upper.upper(1), 2.0)
+
+    var scalar_pair = Bounds(-1.0, 1.0, parameter_count=2)
+    assert_equal(scalar_pair, Bounds([-1.0, -1.0], [1.0, 1.0]))
+
+    var lower_only = Bounds.lower_only([-2.0, 0.0])
+    assert_equal(lower_only.lower(0), -2.0)
+    assert_equal(lower_only.upper(1), inf[DType.float64]())
+
+    var upper_only = Bounds.upper_only([2.0, 4.0])
+    assert_equal(upper_only.lower(0), -inf[DType.float64]())
+    assert_equal(upper_only.upper(1), 4.0)
+
+    var nonnegative = Bounds.nonnegative(3)
+    assert_equal(nonnegative.parameter_count(), 3)
+    assert_equal(nonnegative.lower(1), 0.0)
+    assert_equal(nonnegative.upper(1), inf[DType.float64]())
+
+
+def test_broadcasts_reject_missing_parameter_counts() raises:
+    with assert_raises(contains="bounds require at least one parameter"):
+        _ = Bounds(lower=0.0, upper=List[Float64]())
+    with assert_raises(contains="bounds require at least one parameter"):
+        _ = Bounds(lower=List[Float64](), upper=1.0)
+    with assert_raises(
+        contains="parameter_count must be at least 1 for scalar bounds; got 0"
+    ):
+        _ = Bounds(0.0, 1.0, parameter_count=0)
+    with assert_raises(
+        contains="parameter_count must be at least 1 for scalar bounds; got -2"
+    ):
+        _ = Bounds.nonnegative(-2)
+    with assert_raises(contains="bounds[1] are empty"):
+        _ = Bounds(lower=0.0, upper=[1.0, -1.0])
+    with assert_raises(contains="bounds[1] are empty"):
+        _ = Bounds(lower=[-1.0, 2.0], upper=1.0)
+
+
 def test_bounds_equality_accessors_and_writable_block() raises:
     var first = Bounds([0.0, -inf[DType.float64]()], [inf[DType.float64](), 3.0])
     var same = Bounds([0.0, -inf[DType.float64]()], [inf[DType.float64](), 3.0])
@@ -120,19 +178,38 @@ def test_bounds_equality_accessors_and_writable_block() raises:
     )
 
 
-def test_problem_requires_matching_strictly_feasible_initial_values() raises:
-    with assert_raises(contains="bounds have 1 parameters for 2 initial"):
+def test_problem_matches_bounds_and_nudges_initial_values_strictly_inside() raises:
+    with assert_raises(
+        contains="bounds parameter count 1 must equal initial_parameters count 2"
+    ):
         _ = LeastSquaresProblem(
             RecordingBoundsModel(),
             [0.5, 0.1],
             bounds=Bounds([0.0], [1.0]),
         )
-    with assert_raises(contains="initial parameter[1] 0.0"):
-        _ = LeastSquaresProblem(
-            RecordingBoundsModel(),
-            [0.5, 0.0],
-            bounds=positive_bounds(),
-        )
+    var on_bound = LeastSquaresProblem(
+        RecordingBoundsModel(),
+        [0.5, 0.0],
+        bounds=positive_bounds(),
+    )
+    assert_equal(on_bound.initial_parameters[0], 0.5)
+    assert_true(on_bound.initial_parameters[1] > 0.0)
+    assert_true(on_bound.initial_parameters[1] < 1.0e-9)
+    var on_bound_result = least_squares(on_bound)
+    assert_true(on_bound_result.converged())
+
+    var outside = LeastSquaresProblem(
+        RecordingBoundsModel(),
+        [0.5, 2.0],
+        bounds=Bounds(lower=0.0, upper=[3.0, 1.0]),
+    )
+    assert_equal(outside.initial_parameters[0], 0.5)
+    assert_true(outside.initial_parameters[1] < 1.0)
+    assert_true(outside.initial_parameters[1] > 1.0 - 1.0e-9)
+
+    outside.initial_parameters[1] = 1.0
+    with assert_raises(contains="initial parameter[1] 1.0 is not strictly inside"):
+        outside.validate()
 
 
 def test_bounded_fit_is_strictly_feasible_and_reports_active_rate() raises:
@@ -160,6 +237,31 @@ def test_bounded_fit_is_strictly_feasible_and_reports_active_rate() raises:
     assert_true(abs(bounded.parameters[0] - 0.5836105665926237) <= 1.0e-3)
     assert_equal(bounded.active_bounds, [0, -1])
     assert_true(String(bounded).endswith("active bounds[1]      lower\n"))
+
+
+def test_solver_jacobian_respects_an_upper_bound_near_the_initial_point() raises:
+    var problem = LeastSquaresProblem(
+        OpenUnitDomainModel(),
+        [1.0 - 1.0e-12],
+        bounds=Bounds([0.0], [1.0]),
+    )
+    var result = least_squares(problem)
+
+    assert_true(result.converged())
+    assert_true(abs(result.parameters[0] - 0.25) <= 1.0e-8)
+
+
+def test_solver_accepts_the_representable_predecessor_of_an_upper_bound() raises:
+    var predecessor = bitcast[DType.float64](bitcast[DType.uint64](1.0) - UInt64(1))
+    var problem = LeastSquaresProblem(
+        OpenUnitDomainModel(),
+        [predecessor],
+        bounds=Bounds([0.0], [1.0]),
+    )
+    var result = least_squares(problem)
+
+    assert_true(result.converged())
+    assert_true(abs(result.parameters[0] - 0.25) <= 1.0e-8)
 
 
 def test_bounded_solves_are_exactly_deterministic() raises:

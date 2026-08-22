@@ -161,19 +161,33 @@ def test_options_defaults_and_disabled_tolerances() raises:
 
 
 def test_options_reject_invalid_scale_tolerances_and_step() raises:
-    with assert_raises():
+    with assert_raises(contains="loss_scale must be finite and positive; got 0.0"):
         _ = LeastSquaresOptions(loss_scale=0.0)
-    with assert_raises():
+    with assert_raises(contains="loss_scale must be finite and positive; got nan"):
         _ = LeastSquaresOptions(loss_scale=nan[DType.float64]())
-    with assert_raises():
-        _ = LeastSquaresOptions(ftol=0.0)
-    with assert_raises():
+    with assert_raises(
+        contains="ftol must be finite and positive when enabled; got -1.0"
+    ):
+        _ = LeastSquaresOptions(ftol=-1.0)
+    with assert_raises(
+        contains="xtol must be finite and positive when enabled; got inf"
+    ):
         _ = LeastSquaresOptions(xtol=inf[DType.float64]())
-    with assert_raises():
+    with assert_raises(
+        contains="gtol must be finite and positive when enabled; got -1.0"
+    ):
         _ = LeastSquaresOptions(gtol=-1.0)
-    with assert_raises():
+    with assert_raises(
+        contains=(
+            "finite_difference_step must be finite and positive when enabled; got 0.0"
+        )
+    ):
         _ = LeastSquaresOptions(finite_difference_step=0.0)
-    with assert_raises():
+    with assert_raises(
+        contains=(
+            "finite_difference_step must be finite and positive when enabled; got inf"
+        )
+    ):
         _ = LeastSquaresOptions(finite_difference_step=inf[DType.float64]())
     with assert_raises(contains="x_scale[0]"):
         _ = LeastSquaresOptions(x_scale=Optional[List[Float64]]([0.0]))
@@ -186,23 +200,23 @@ def test_options_reject_invalid_scale_tolerances_and_step() raises:
 
 
 def test_options_reject_invalid_budgets_and_damping() raises:
-    with assert_raises():
+    with assert_raises(contains="max_iterations must be positive; got 0"):
         _ = LeastSquaresOptions(max_iterations=0)
-    with assert_raises():
+    with assert_raises(contains="max_residual_evaluations must be positive; got -1"):
         _ = LeastSquaresOptions(max_residual_evaluations=-1)
-    with assert_raises():
+    with assert_raises(contains="initial_damping must be finite and positive; got 0.0"):
         _ = LeastSquaresOptions(initial_damping=0.0)
-    with assert_raises():
+    with assert_raises(contains="min_damping must be finite and positive; got 0.0"):
         _ = LeastSquaresOptions(min_damping=0.0)
-    with assert_raises():
+    with assert_raises(contains="max_damping must be finite and positive; got inf"):
         _ = LeastSquaresOptions(max_damping=inf[DType.float64]())
-    with assert_raises():
+    with assert_raises(contains="min_damping 1.0 cannot exceed initial_damping 0.5"):
         _ = LeastSquaresOptions(
             min_damping=1.0,
             initial_damping=0.5,
             max_damping=2.0,
         )
-    with assert_raises():
+    with assert_raises(contains="initial_damping 3.0 cannot exceed max_damping 2.0"):
         _ = LeastSquaresOptions(
             min_damping=0.5,
             initial_damping=3.0,
@@ -213,17 +227,19 @@ def test_options_reject_invalid_budgets_and_damping() raises:
 def test_mutated_options_are_revalidated() raises:
     var options = LeastSquaresOptions()
     options.max_iterations = 0
-    with assert_raises():
+    with assert_raises(contains="max_iterations must be positive; got 0"):
         options.validate()
 
     options.max_iterations = 1
     options.ftol = nan[DType.float64]()
-    with assert_raises():
+    with assert_raises(
+        contains="ftol must be finite and positive when enabled; got nan"
+    ):
         options.validate()
 
     options.ftol = None
     options.min_damping = 2.0
-    with assert_raises():
+    with assert_raises(contains="min_damping 2.0 cannot exceed initial_damping 0.001"):
         options.validate()
 
 
@@ -262,11 +278,18 @@ def test_problem_supplies_unit_weights() raises:
 
 
 def test_problem_rejects_invalid_dimensions_and_parameters() raises:
-    with assert_raises():
+    with assert_raises(
+        contains="initial_parameters must contain at least one parameter; got 0"
+    ):
         _ = LeastSquaresProblem(AffineModel(), List[Float64]())
-    with assert_raises():
+    with assert_raises(contains="initial_parameters[1] must be finite; got nan"):
         _ = LeastSquaresProblem(AffineModel(), [1.0, nan[DType.float64]()])
-    with assert_raises():
+    with assert_raises(
+        contains=(
+            "model declares 1 residual for 2 parameters; a least-squares problem "
+            "needs at least as many residuals as parameters"
+        )
+    ):
         _ = LeastSquaresProblem(OneResidualModel(), [1.0, 2.0])
     with assert_raises(contains="x_scale has 3 entries for 2 parameters"):
         _ = LeastSquaresProblem(
@@ -278,58 +301,66 @@ def test_problem_rejects_invalid_dimensions_and_parameters() raises:
         )
 
     var problem = LeastSquaresProblem(AffineModel(), [1.0, 2.0])
-    with assert_raises():
+    with assert_raises(
+        contains="parameters count 1 must equal initial_parameters count 2"
+    ):
         _ = problem.evaluate_residuals([1.0])
-    with assert_raises():
+    with assert_raises(contains="parameters[1] must be finite; got inf"):
         _ = problem.evaluate_residuals([1.0, inf[DType.float64]()])
 
 
 def test_problem_rejects_invalid_weights() raises:
-    with assert_raises():
+    with assert_raises(contains="weights count 1 must equal residual_count 2"):
         _ = LeastSquaresProblem(AffineModel(), [1.0, 2.0], weights=[1.0])
-    with assert_raises():
+    with assert_raises(contains="weights[1] must be finite and non-negative; got -1.0"):
         _ = LeastSquaresProblem(AffineModel(), [1.0, 2.0], weights=[1.0, -1.0])
-    with assert_raises():
+    with assert_raises(contains="weights[1] must be finite and non-negative; got inf"):
         _ = LeastSquaresProblem(
             AffineModel(), [1.0, 2.0], weights=[1.0, inf[DType.float64]()]
         )
-    with assert_raises():
+    with assert_raises(
+        contains="weights must include at least one positive entry; got all zeros"
+    ):
         _ = LeastSquaresProblem(AffineModel(), [1.0, 2.0], weights=[0.0, 0.0])
 
 
 def test_problem_revalidates_reachable_mutation_before_callback() raises:
     var problem = LeastSquaresProblem(AffineModel(), [1.0, 2.0])
     problem.weights[0] = -1.0
-    with assert_raises():
+    with assert_raises(contains="weights[0] must be finite and non-negative; got -1.0"):
         _ = problem.evaluate_initial_residuals()
     assert_equal(problem.model.calls, 0)
 
     problem.weights[0] = 1.0
     problem.options.max_residual_evaluations = 0
-    with assert_raises():
+    with assert_raises(contains="max_residual_evaluations must be positive; got 0"):
         _ = problem.evaluate_initial_residuals()
     assert_equal(problem.model.calls, 0)
 
     problem.options.max_residual_evaluations = 1
     problem.initial_parameters[0] = nan[DType.float64]()
-    with assert_raises():
+    with assert_raises(contains="initial_parameters[0] must be finite; got nan"):
         _ = problem.evaluate_initial_residuals()
     assert_equal(problem.model.calls, 0)
 
     problem.initial_parameters[0] = 1.0
     problem.residual_count = 3
-    with assert_raises():
+    with assert_raises(
+        contains="model residual_count 2 must match problem residual_count 3"
+    ):
         _ = problem.evaluate_initial_residuals()
     assert_equal(problem.model.calls, 0)
 
 
 def test_problem_rejects_invalid_callback_results() raises:
     var wrong_length = LeastSquaresProblem(WrongLengthModel(), [1.0, 2.0])
-    with assert_raises():
+    with assert_raises(
+        contains="model returned a residual vector of length 1; expected length 2"
+    ):
         _ = wrong_length.evaluate_initial_residuals()
 
     var nonfinite = LeastSquaresProblem(NonfiniteModel(), [1.0, 2.0])
-    with assert_raises():
+    with assert_raises(contains="model residuals[1] must be finite; got inf"):
         _ = nonfinite.evaluate_initial_residuals()
 
     var raising = LeastSquaresProblem(RaisingModel(), [1.0, 2.0])
@@ -339,7 +370,12 @@ def test_problem_rejects_invalid_callback_results() raises:
 
 def test_callback_cannot_change_its_entry_residual_dimension() raises:
     var problem = LeastSquaresProblem(DriftingCountModel(), [1.0, 2.0])
-    with assert_raises(contains="changed during residual evaluation"):
+    with assert_raises(
+        contains=(
+            "model residual_count changed during residual evaluation; got 3 "
+            "after entering with 2"
+        )
+    ):
         _ = problem.evaluate_initial_residuals()
     assert_equal(problem.model.declared_count, 3)
 

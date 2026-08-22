@@ -1,6 +1,6 @@
 """Post-fit uncertainty statistics and stable readable reports."""
 
-from std.collections import List
+from std.collections import List, Optional
 from std.io import Writable, Writer
 from std.math import floor, log10, sqrt
 from std.utils.numerics import isfinite
@@ -11,7 +11,7 @@ from ._jacobian import (
     _forward_difference_jacobian,
 )
 from ._kernel import _DenseMatrix, _jt_j, _solve_spd
-from ._objective import _build_objective_model
+from ._objective import _build_objective_model_owned
 from .options import JacobianScheme
 from .problem import LeastSquaresProblem, ResidualModel
 from .result import LeastSquaresResult
@@ -27,14 +27,21 @@ struct FitStatistics(Copyable, Equatable, Writable):
     Convention: Statistics use the loss-scaled weighted residuals and Jacobian
     produced by the solver's objective model. Reduced chi-squared is
     ``sum(model_residual_i^2) / (m_effective - n)``, where ``m_effective``
-    counts positive-weight residuals. Covariance is
-    ``(J_model^T J_model)^-1 * reduced_chi_squared``, equivalently
-    ``(J^T W J)^-1 * reduced_chi_squared`` for the effective row weighting.
-    With unit weights and linear loss this is exactly SciPy
-    ``curve_fit(..., absolute_sigma=False)`` covariance. Computing statistics
-    re-evaluates the model ``n + 1`` times with forward differences or
-    ``2n + 1`` times with central differences at the result parameters; those
-    callbacks are outside every solver evaluation budget.
+    counts positive-weight residuals. By default, covariance is
+    ``(J_model^T J_model)^-1 * reduced_chi_squared``. With linear loss,
+    ``J_model = diag(w_i) J_raw``, so each observation contributes ``w_i^2``
+    to the normal matrix. This matches SciPy
+    ``curve_fit(..., absolute_sigma=False)``. Passing
+    ``absolute_sigma=True`` to ``fit_statistics`` omits the reduced-chi-squared
+    scale and returns ``(J_model^T J_model)^-1`` for known measurement
+    uncertainties.
+    Computing statistics re-evaluates the model ``n + 1`` times with forward
+    differences or ``2n + 1`` times with central differences at the result
+    parameters; those callbacks are outside every solver evaluation budget.
+
+    Correlation is undefined when either parameter has zero standard error.
+    This occurs for an exact fit under the relative-noise convention above;
+    ``correlation()`` raises instead of returning a non-finite value.
     """
 
     var _covariance: List[Float64]
@@ -89,24 +96,24 @@ struct FitStatistics(Copyable, Equatable, Writable):
                     )
                 )
         for index in range(parameter_count):
-            if self._covariance[index * parameter_count + index] <= 0.0:
+            if self._covariance[index * parameter_count + index] < 0.0:
                 raise Error(
                     String(
                         "covariance diagonal entry ",
                         index,
-                        " must be positive; got ",
+                        " must be non-negative; got ",
                         self._covariance[index * parameter_count + index],
                     )
                 )
             if (
                 not isfinite(self._standard_errors[index])
-                or self._standard_errors[index] <= 0.0
+                or self._standard_errors[index] < 0.0
             ):
                 raise Error(
                     String(
                         "standard error ",
                         index,
-                        " must be finite and positive; got ",
+                        " must be finite and non-negative; got ",
                         self._standard_errors[index],
                     )
                 )
@@ -133,11 +140,25 @@ struct FitStatistics(Copyable, Equatable, Writable):
         """Return one trusted parameter standard error."""
         return self._standard_errors[index]
 
-    def correlation(self, row: Int, column: Int) -> Float64:
-        """Return covariance normalized by the two standard errors."""
-        return self.covariance(row, column) / (
-            self.standard_error(row) * self.standard_error(column)
-        )
+    def correlation(self, row: Int, column: Int) raises -> Float64:
+        """Return covariance normalized by two nonzero standard errors."""
+        var row_error = self.standard_error(row)
+        var column_error = self.standard_error(column)
+        if row_error == 0.0 or column_error == 0.0:
+            raise Error(
+                "correlation is undefined when standard error is zero; "
+                "inspect covariance or standard_error() for an exact fit"
+            )
+        var denominator = row_error * column_error
+        if denominator == 0.0:
+            raise Error(
+                "correlation is not representable because the standard-error "
+                "product underflows"
+            )
+        var result = self.covariance(row, column) / denominator
+        if not isfinite(result):
+            raise Error("correlation is not finite")
+        return result
 
     def parameter_count(self) -> Int:
         """Return the number of parameters described by these statistics."""
@@ -179,7 +200,10 @@ struct FitStatistics(Copyable, Equatable, Writable):
 def fit_statistics[
     M: ResidualModel
 ](
-    mut problem: LeastSquaresProblem[M], result: LeastSquaresResult
+    mut problem: LeastSquaresProblem[M],
+    result: LeastSquaresResult,
+    *,
+    absolute_sigma: Bool = False,
 ) raises -> FitStatistics:
     """Re-evaluate a fitted problem and estimate parameter uncertainty.
 
@@ -187,9 +211,14 @@ def fit_statistics[
     evaluated at ``result.parameters`` using the problem's finite-difference
     step. The resulting loss-scaled weighted objective model defines
     ``reduced_chi_squared = sum(model_residual_i^2) / (m_effective - n)`` and
-    ``covariance = (J^T W J)^-1 * reduced_chi_squared``. Unit weights with
-    linear loss match SciPy ``curve_fit(..., absolute_sigma=False)``. These
-    diagnostic callbacks are outside every solver evaluation budget.
+    ``covariance = (J_model^T J_model)^-1 * reduced_chi_squared`` by default.
+    With linear loss, ``J_model = diag(w_i) J_raw``. With
+    ``absolute_sigma=True``, covariance is ``(J_model^T J_model)^-1`` without
+    the reduced-chi-squared rescaling. Unit weights with linear loss and the
+    default match SciPy ``curve_fit(..., absolute_sigma=False)``. These
+    diagnostic callbacks are outside every solver evaluation budget. Exact fits
+    return zero covariance and standard errors; correlation is undefined for
+    those zero-error rows.
 
     Raises:
         Error: If dimensions mismatch, degrees of freedom are not positive, the
@@ -220,6 +249,7 @@ def fit_statistics[
             raw_residuals,
             diagnostic_evaluations,
             relative_step=relative_step,
+            bounds=problem.bounds,
         )
     else:
         raw_jacobian = _forward_difference_jacobian(
@@ -228,10 +258,11 @@ def fit_statistics[
             raw_residuals,
             diagnostic_evaluations,
             relative_step=relative_step,
+            bounds=problem.bounds,
         )
-    var objective = _build_objective_model(
+    var objective = _build_objective_model_owned(
         raw_residuals,
-        raw_jacobian,
+        raw_jacobian^,
         problem.weights,
         problem.options.loss,
         problem.options.loss_scale,
@@ -280,6 +311,9 @@ def fit_statistics[
 
     var normal = _jt_j(objective.jacobian)
     var covariance = List[Float64](length=parameter_count * parameter_count, fill=0.0)
+    var covariance_scale = 1.0
+    if not absolute_sigma:
+        covariance_scale = reduced_chi_squared
     for column in range(parameter_count):
         var right_hand_side = List[Float64](length=parameter_count, fill=0.0)
         right_hand_side[column] = 1.0
@@ -294,7 +328,7 @@ def fit_statistics[
             )
         for row in range(parameter_count):
             covariance[row * parameter_count + column] = (
-                inverse_column[row] * reduced_chi_squared
+                inverse_column[row] * covariance_scale
             )
 
     for row in range(parameter_count):
@@ -321,9 +355,14 @@ struct FitReport(Copyable, Writable):
 
     var _result: LeastSquaresResult
     var _statistics: FitStatistics
+    var _parameter_names: List[String]
 
     def __init__(
-        out self, result: LeastSquaresResult, statistics: FitStatistics
+        out self,
+        result: LeastSquaresResult,
+        statistics: FitStatistics,
+        *,
+        parameter_names: List[String] = List[String](),
     ) raises:
         """Copy a result and matching parameter statistics into one report."""
         if len(result.parameters) != statistics.parameter_count():
@@ -335,8 +374,30 @@ struct FitReport(Copyable, Writable):
                     statistics.parameter_count(),
                 )
             )
+        if len(parameter_names) > 0:
+            if len(parameter_names) != len(result.parameters):
+                raise Error(
+                    String(
+                        "parameter_names has ",
+                        len(parameter_names),
+                        " entries but result parameters has ",
+                        len(result.parameters),
+                        " entries; provide exactly one name per parameter",
+                    )
+                )
+            for index in range(len(parameter_names)):
+                if parameter_names[index].byte_length() == 0:
+                    raise Error(
+                        String(
+                            "parameter_names[",
+                            index,
+                            "] must not be empty; got an empty string — provide ",
+                            "a non-empty parameter label",
+                        )
+                    )
         self._result = result.copy()
         self._statistics = statistics.copy()
+        self._parameter_names = parameter_names.copy()
 
     def __str__(self) -> String:
         """Return the stable stderr-aware multiline fit report."""
@@ -359,14 +420,36 @@ struct FitReport(Copyable, Writable):
         writer.write("jacobian evaluations  ", self._result.jacobian_evaluations, "\n")
         for index in range(len(self._result.parameters)):
             var label = String("parameters[", index, "]")
+            if len(self._parameter_names) > 0:
+                label = String(self._parameter_names[index])
             _write_padded_label(writer, label)
-            writer.write(
-                _format_estimate(
-                    self._result.parameters[index],
-                    self._statistics.standard_error(index),
-                ),
-                "\n",
-            )
+            if self._result.active_bounds[index] < 0:
+                writer.write(
+                    String(self._result.parameters[index]),
+                    " (at lower bound)\n",
+                )
+            elif self._result.active_bounds[index] > 0:
+                writer.write(
+                    String(self._result.parameters[index]),
+                    " (at upper bound)\n",
+                )
+            else:
+                writer.write(
+                    _format_estimate(
+                        self._result.parameters[index],
+                        self._statistics.standard_error(index),
+                    ),
+                    "\n",
+                )
+        for index in range(len(self._result.active_bounds)):
+            if self._result.active_bounds[index] == 0:
+                continue
+            var label = String("active bounds[", index, "]")
+            _write_padded_label(writer, label)
+            if self._result.active_bounds[index] < 0:
+                writer.write("lower\n")
+            else:
+                writer.write("upper\n")
         writer.write(
             "degrees of freedom    ", self._statistics.degrees_of_freedom, "\n"
         )
@@ -379,6 +462,9 @@ struct FitReport(Copyable, Writable):
 
 def _write_padded_label[W: Writer](mut writer: W, label: String):
     writer.write(label)
+    if label.byte_length() >= 22:
+        writer.write("  ")
+        return
     for _ in range(label.byte_length(), 22):
         writer.write(" ")
 

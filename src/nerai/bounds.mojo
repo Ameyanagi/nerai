@@ -1,6 +1,7 @@
 """Validated parameter-wise box bounds."""
 
 from std.io import Writable, Writer
+from std.utils.numerics import inf
 
 
 struct Bounds(Copyable, Equatable, Writable):
@@ -27,6 +28,65 @@ struct Bounds(Copyable, Equatable, Writable):
         self._upper = upper.copy()
         self.validate()
 
+    def __init__(out self, *, lower: Float64, upper: List[Float64]) raises:
+        """Broadcast one lower endpoint across the supplied upper endpoints.
+
+        Keyword-only so the broadcast overloads never make the plain
+        two-list constructor ambiguous for list literals.
+        """
+        var lower_endpoints = List[Float64](length=len(upper), fill=lower)
+        self = Self(lower_endpoints, upper)
+
+    def __init__(out self, *, lower: List[Float64], upper: Float64) raises:
+        """Broadcast one upper endpoint across the supplied lower endpoints.
+
+        Keyword-only so the broadcast overloads never make the plain
+        two-list constructor ambiguous for list literals.
+        """
+        var upper_endpoints = List[Float64](length=len(lower), fill=upper)
+        self = Self(lower, upper_endpoints)
+
+    def __init__(
+        out self,
+        lower: Float64,
+        upper: Float64,
+        *,
+        parameter_count: Int,
+    ) raises:
+        """Broadcast scalar endpoints to ``parameter_count`` parameters."""
+        if parameter_count < 1:
+            raise Error(
+                String(
+                    "parameter_count must be at least 1 for scalar bounds; got ",
+                    parameter_count,
+                    " — pass the number of parameters being bounded",
+                )
+            )
+        var lower_endpoints = List[Float64](length=parameter_count, fill=lower)
+        var upper_endpoints = List[Float64](length=parameter_count, fill=upper)
+        self = Self(lower_endpoints, upper_endpoints)
+
+    @staticmethod
+    def lower_only(lower: List[Float64]) raises -> Self:
+        """Return lower bounds with no finite upper bounds."""
+        var upper = List[Float64](length=len(lower), fill=inf[DType.float64]())
+        return Self(lower, upper)
+
+    @staticmethod
+    def upper_only(upper: List[Float64]) raises -> Self:
+        """Return upper bounds with no finite lower bounds."""
+        var lower = List[Float64](length=len(upper), fill=-inf[DType.float64]())
+        return Self(lower, upper)
+
+    @staticmethod
+    def nonnegative(parameter_count: Int) raises -> Self:
+        """Return zero-to-positive-infinity bounds for every parameter."""
+        return Self(
+            0.0,
+            inf[DType.float64](),
+            parameter_count=parameter_count,
+        )
+
     def validate(self) raises:
         """Revalidate all endpoints after unusual direct mutation."""
         if len(self._lower) != len(self._upper):
@@ -40,7 +100,10 @@ struct Bounds(Copyable, Equatable, Writable):
                 )
             )
         if len(self._lower) < 1:
-            raise Error("bounds require at least one parameter")
+            raise Error(
+                "bounds require at least one parameter; got 0 endpoint pairs — "
+                "provide at least one lower and upper endpoint"
+            )
 
         for index in range(len(self._lower)):
             var lower = self._lower[index]

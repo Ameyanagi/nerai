@@ -4,6 +4,34 @@
 
 Optimization and nonlinear least squares for Mojo.
 
+## Install
+
+The package is not published yet, but the consumer install path for a
+[Pixi](https://pixi.sh/) project is to add the Nerai channel to
+`[workspace].channels` in `pixi.toml`:
+
+```toml
+[workspace]
+channels = ["https://ameyanagi.github.io/mojo-channel", "conda-forge"]
+```
+
+Then add the package:
+
+```sh
+pixi add mojo-nerai
+```
+
+Alternatively, run Nerai from a source checkout:
+
+```sh
+git clone https://github.com/Ameyanagi/nerai.git
+cd nerai
+pixi install --locked
+```
+
+Save your program in the checkout as `your_fit.mojo`, then run it with
+`pixi run mojo run -I src your_fit.mojo`.
+
 ## Quickstart
 
 Define the curve itself; `CurveFit` builds residuals, solves, and estimates
@@ -14,7 +42,8 @@ from nerai import CurveFit, CurveModel
 from std.collections import List
 from std.math import exp
 
-struct Decay(Copyable, CurveModel):
+struct Decay(CurveModel):
+    # This empty initializer is required Mojo boilerplate for a fieldless struct.
     def __init__(out self):
         pass
 
@@ -45,9 +74,18 @@ def main() raises:
              0.1540282248418524, 0.126041297379791,
              0.08288007873970038, 0.16218689287408977,
              0.07961970944963043, 0.05407706744764089]
-    var fit = CurveFit(Decay(), t, y, [1.0, 1.0])
+    var fit = CurveFit(
+        Decay(),
+        t,
+        y,
+        [1.0, 1.0],
+        parameter_names=["amplitude", "rate"],
+    )
     print(fit.solve(), end="")
 ```
+
+Save this quickstart as `fit.mojo` in a checkout and run
+`pixi run mojo run -I src fit.mojo`.
 
 ```text
 termination           cost tolerance
@@ -57,22 +95,36 @@ optimality            5.484938620439154e-07
 iterations            19
 residual evaluations  40
 jacobian evaluations  10
-parameters[0]         2.487 +/- 0.028
-parameters[1]         0.699 +/- 0.012
+amplitude             2.487 +/- 0.028
+rate                  0.699 +/- 0.012
 degrees of freedom    23
 reduced chi-squared   0.0017814213127856553
 ```
 
-`parameters[0]` is amplitude; its payoff line is
-`amplitude 2.487 +/- 0.028`. The complete executable version is
-[`examples/exponential_decay.mojo`](examples/exponential_decay.mojo).
+Pass solver options inline, such as `options=LeastSquaresOptions(loss=...)`, or
+transfer an existing variable with `options=options^`. Plain `options=options`
+cannot be implicitly copied.
+
+## Examples
+
+The task-focused examples are
+[`exponential_decay.mojo`](examples/exponential_decay.mojo),
+[`gaussian_peak.mojo`](examples/gaussian_peak.mojo), and
+[`bounded_decay.mojo`](examples/bounded_decay.mojo). The last one uses the raw
+problem API to contrast an unbounded fit with a physically bounded fit.
+[`ill_conditioned.mojo`](examples/ill_conditioned.mojo) demonstrates two
+strongly correlated columns handled without adding a linear-solver option to
+the public API.
 
 ## Scope
 
 Nerai provides dense `Float64` nonlinear least squares with forward or central
-finite-difference Jacobians, observation weights, linear and robust losses,
-parameter scaling, box bounds, explicit termination reports, and post-fit
-covariance estimates. `CurveFit` is the data-fitting front door;
+bound-aware finite-difference Jacobians, observation weights, linear and robust
+losses, parameter scaling, box bounds, adaptive QR stabilization, explicit
+termination reports, and post-fit covariance estimates. Full-rank exact fits
+with positive degrees of freedom report zero covariance and zero standard
+errors rather than failing validation; correlation is then undefined and
+`FitStatistics.correlation()` raises. `CurveFit` is the data-fitting front door;
 `LeastSquaresProblem` and `least_squares()` remain the expert residual-model
 API. See the [issue-sized v0.1 implementation plan](docs/implementation-plan.md).
 
@@ -83,27 +135,26 @@ Cost is the robust objective value including the one-half factor:
 exactly `0.5 * sum((w_i * r_i)^2)`. Optimality is the infinity norm of the
 gradient.
 
-Covariance is `(J^T W J)^-1 * reduced_chi_squared`, with degrees of freedom
-`m_effective - n`; this follows SciPy `curve_fit(..., absolute_sigma=False)`
-semantics. Weights multiply residuals once. On the `CurveFit` front door,
-`sigma` maps to `w_i = 1 / sigma_i` with `absolute_sigma=False` covariance
-semantics.
+An initial guess on or outside a bound is nudged strictly inside, following
+SciPy.
+
+Covariance is `(J_model^T J_model)^-1 * reduced_chi_squared`, with degrees of
+freedom `m_effective - n`; this follows SciPy
+`curve_fit(..., absolute_sigma=False)` semantics. For linear loss,
+`J_model = diag(w_i) J_raw`, so the normal matrix contains `w_i^2`. On the
+`CurveFit` front door, `sigma` maps to `w_i = 1 / sigma_i`. Supplying `sigma`
+with `absolute_sigma=True` skips the reduced-chi-squared rescaling, matching
+SciPy's known-measurement-uncertainty convention.
 
 ## Development
 
-Install [Pixi](https://pixi.sh/), then run:
+From a source checkout, run:
 
 ```sh
-pixi install --locked
 pixi run check
 pixi run example
+pixi run bench
 ```
-
-The task-focused examples are
-[`exponential_decay.mojo`](examples/exponential_decay.mojo),
-[`gaussian_peak.mojo`](examples/gaussian_peak.mojo), and
-[`bounded_decay.mojo`](examples/bounded_decay.mojo). The last one uses the raw
-problem API to contrast an unbounded fit with a physically bounded fit.
 
 The exact stable Mojo compiler and all development dependencies are captured in
 `pixi.lock`. Runtime and library code is Mojo-first and pure Mojo wherever
@@ -126,7 +177,7 @@ first release.
 - `src/nerai/`: library or application source
 - `tests/`: TestSuite unit, reference-value, and invariant tests
 - `examples/`: small compilable usage programs
-- `benchmarks/`: reproducible methodology and later benchmark programs
+- `benchmarks/`: reproducible methodology, profiler evidence, and benchmarks
 - `docs/`: architecture, design, compatibility, roadmap, and release policy
 - `conda.recipe/`: local Rattler build recipe
 

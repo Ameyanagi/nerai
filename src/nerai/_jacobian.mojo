@@ -1,7 +1,9 @@
 """Private finite-difference Jacobian construction and call accounting."""
 
+from std.collections import Optional
 from std.utils.numerics import isfinite
 
+from .bounds import Bounds
 from ._kernel import _DenseMatrix
 from .problem import ResidualModel
 
@@ -19,6 +21,7 @@ def _forward_difference_jacobian[
     mut evaluations: Int,
     *,
     relative_step: Float64 = _DEFAULT_RELATIVE_STEP,
+    bounds: Optional[Bounds] = None,
 ) raises -> _DenseMatrix:
     """Differentiate raw residuals using a supplied base evaluation.
 
@@ -32,31 +35,33 @@ def _forward_difference_jacobian[
     var parameter_count = len(parameters)
     var result = _DenseMatrix(residual_count, parameter_count)
 
+    var perturbed_parameters = parameters.copy()
     for col in range(parameter_count):
         if model.residual_count() != residual_count:
             raise Error("model residual count changed during Jacobian evaluation")
 
         var parameter = parameters[col]
-        var step = relative_step * max(1.0, abs(parameter))
+        var nominal_step = relative_step * max(1.0, abs(parameter))
+        var step = _bounded_forward_step(parameter, nominal_step, bounds, col)
         var perturbed_value = parameter + step
         if (
             not isfinite(step)
-            or step <= 0.0
+            or step == 0.0
             or not isfinite(perturbed_value)
             or perturbed_value == parameter
         ):
             raise Error("finite-difference perturbation is not representable")
 
-        var perturbed_parameters = parameters.copy()
         perturbed_parameters[col] = perturbed_value
         evaluations += 1
         var perturbed_residuals = model.residuals(perturbed_parameters)
         _validate_callback_result(model, perturbed_residuals, residual_count)
 
         for row in range(residual_count):
-            result._values[row * parameter_count + col] = (
+            result._values[col * residual_count + row] = (
                 perturbed_residuals[row] - base_residuals[row]
             ) / step
+        perturbed_parameters[col] = parameter
     return result^
 
 
@@ -69,6 +74,7 @@ def _central_difference_jacobian[
     mut evaluations: Int,
     *,
     relative_step: Float64 = _DEFAULT_RELATIVE_STEP,
+    bounds: Optional[Bounds] = None,
 ) raises -> _DenseMatrix:
     """Differentiate raw residuals symmetrically around a supplied base.
 
@@ -82,15 +88,20 @@ def _central_difference_jacobian[
     var parameter_count = len(parameters)
     var result = _DenseMatrix(residual_count, parameter_count)
 
+    var perturbed_parameters = parameters.copy()
     for col in range(parameter_count):
         if model.residual_count() != residual_count:
             raise Error("model residual count changed during Jacobian evaluation")
 
         var parameter = parameters[col]
-        var step = relative_step * max(1.0, abs(parameter))
+        var nominal_step = relative_step * max(1.0, abs(parameter))
+        var symmetric = _step_is_inside(
+            parameter, nominal_step, bounds, col
+        ) and _step_is_inside(parameter, -nominal_step, bounds, col)
+        var step = _bounded_central_step(parameter, nominal_step, bounds, col)
         var plus_value = parameter + step
         var minus_value = parameter - step
-        if (
+        if symmetric and (
             not isfinite(step)
             or step <= 0.0
             or not isfinite(plus_value)
@@ -100,21 +111,45 @@ def _central_difference_jacobian[
         ):
             raise Error("finite-difference perturbation is not representable")
 
-        var perturbed_parameters = parameters.copy()
-        perturbed_parameters[col] = plus_value
-        evaluations += 1
-        var plus_residuals = model.residuals(perturbed_parameters)
-        _validate_callback_result(model, plus_residuals, residual_count)
+        if symmetric:
+            perturbed_parameters[col] = plus_value
+            evaluations += 1
+            var plus_residuals = model.residuals(perturbed_parameters)
+            _validate_callback_result(model, plus_residuals, residual_count)
 
-        perturbed_parameters[col] = minus_value
-        evaluations += 1
-        var minus_residuals = model.residuals(perturbed_parameters)
-        _validate_callback_result(model, minus_residuals, residual_count)
+            perturbed_parameters[col] = minus_value
+            evaluations += 1
+            var minus_residuals = model.residuals(perturbed_parameters)
+            _validate_callback_result(model, minus_residuals, residual_count)
 
-        for row in range(residual_count):
-            result._values[row * parameter_count + col] = (
-                plus_residuals[row] - minus_residuals[row]
-            ) / (2.0 * step)
+            for row in range(residual_count):
+                result._values[col * residual_count + row] = (
+                    plus_residuals[row] - minus_residuals[row]
+                ) / (2.0 * step)
+        else:
+            # Preserve central differences' two-callback budget with a
+            # second-order one-sided stencil when a bound blocks one side.
+            var second_value = parameter + 2.0 * step
+            if not _step_is_inside(parameter, 2.0 * step, bounds, col):
+                raise Error(
+                    "bounded finite-difference perturbation is not representable"
+                )
+            perturbed_parameters[col] = plus_value
+            evaluations += 1
+            var first_residuals = model.residuals(perturbed_parameters)
+            _validate_callback_result(model, first_residuals, residual_count)
+
+            perturbed_parameters[col] = second_value
+            evaluations += 1
+            var second_residuals = model.residuals(perturbed_parameters)
+            _validate_callback_result(model, second_residuals, residual_count)
+            for row in range(residual_count):
+                result._values[col * residual_count + row] = (
+                    -3.0 * base_residuals[row]
+                    + 4.0 * first_residuals[row]
+                    - second_residuals[row]
+                ) / (2.0 * step)
+        perturbed_parameters[col] = parameter
     return result^
 
 
@@ -126,6 +161,7 @@ def _forward_difference_jacobian_without_base[
     mut evaluations: Int,
     *,
     relative_step: Float64 = _DEFAULT_RELATIVE_STEP,
+    bounds: Optional[Bounds] = None,
 ) raises -> _DenseMatrix:
     """Evaluate a base residual vector, then form a forward Jacobian.
 
@@ -151,7 +187,93 @@ def _forward_difference_jacobian_without_base[
         base_residuals,
         evaluations,
         relative_step=relative_step,
+        bounds=bounds,
     )
+
+
+def _bounded_forward_step(
+    parameter: Float64,
+    nominal_step: Float64,
+    bounds: Optional[Bounds],
+    index: Int,
+) raises -> Float64:
+    """Prefer a forward step, then use an inward backward step near a bound."""
+    if not bounds:
+        return nominal_step
+    var configured = bounds.value().copy()
+    var forward = nominal_step
+    if isfinite(configured.upper(index)):
+        forward = min(forward, 0.5 * (configured.upper(index) - parameter))
+    if _step_is_inside(parameter, forward, bounds, index):
+        return forward
+
+    var backward = nominal_step
+    if isfinite(configured.lower(index)):
+        backward = min(backward, 0.5 * (parameter - configured.lower(index)))
+    if _step_is_inside(parameter, -backward, bounds, index):
+        return -backward
+    raise Error("bounded finite-difference perturbation is not representable")
+
+
+def _bounded_central_step(
+    parameter: Float64,
+    nominal_step: Float64,
+    bounds: Optional[Bounds],
+    index: Int,
+) raises -> Float64:
+    """Return a symmetric step or an inward step for a one-sided stencil."""
+    if not bounds:
+        return nominal_step
+    if _step_is_inside(parameter, nominal_step, bounds, index) and (
+        _step_is_inside(parameter, -nominal_step, bounds, index)
+    ):
+        return nominal_step
+
+    if _step_is_inside(parameter, 2.0 * nominal_step, bounds, index):
+        return nominal_step
+    if _step_is_inside(parameter, -2.0 * nominal_step, bounds, index):
+        return -nominal_step
+
+    var configured = bounds.value().copy()
+    var forward = nominal_step
+    if isfinite(configured.upper(index)):
+        forward = min(forward, 0.25 * (configured.upper(index) - parameter))
+    var backward = nominal_step
+    if isfinite(configured.lower(index)):
+        backward = min(backward, 0.25 * (parameter - configured.lower(index)))
+    if backward >= forward and _step_is_inside(
+        parameter, -2.0 * backward, bounds, index
+    ):
+        return -backward
+    if _step_is_inside(parameter, 2.0 * forward, bounds, index):
+        return forward
+    if _step_is_inside(parameter, -2.0 * backward, bounds, index):
+        return -backward
+    raise Error("bounded finite-difference perturbation is not representable")
+
+
+def _step_is_inside(
+    parameter: Float64,
+    step: Float64,
+    bounds: Optional[Bounds],
+    index: Int,
+) -> Bool:
+    var perturbed = parameter + step
+    if (
+        not isfinite(step)
+        or step == 0.0
+        or not isfinite(perturbed)
+        or perturbed == parameter
+    ):
+        return False
+    if not bounds:
+        return True
+    var configured = bounds.value().copy()
+    if isfinite(configured.lower(index)) and perturbed <= configured.lower(index):
+        return False
+    if isfinite(configured.upper(index)) and perturbed >= configured.upper(index):
+        return False
+    return True
 
 
 def _validate_inputs[

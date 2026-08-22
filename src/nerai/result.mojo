@@ -17,10 +17,12 @@ struct LeastSquaresResult(Copyable, Equatable, Writable):
     exceed ``residual_evaluations - 1``. Jacobian evaluations cannot exceed
     residual evaluations. ``active_bounds`` follows SciPy's active-mask
     convention: ``-1`` is lower-active, ``0`` is free, and ``1`` is
-    upper-active.
+    upper-active. ``residuals`` stores the raw model residual vector at the
+    reported parameters; an empty vector means it was not recorded.
     """
 
     var parameters: List[Float64]
+    var residuals: List[Float64]
     var cost: Float64
     var optimality: Float64
     var iterations: Int
@@ -39,9 +41,11 @@ struct LeastSquaresResult(Copyable, Equatable, Writable):
         residual_evaluations: Int,
         jacobian_evaluations: Int,
         termination: TerminationReason,
+        residuals: List[Float64] = List[Float64](),
         active_bounds: Optional[List[Int]] = None,
     ) raises:
         self.parameters = parameters.copy()
+        self.residuals = residuals.copy()
         self.cost = cost
         self.optimality = optimality
         self.iterations = iterations
@@ -60,15 +64,20 @@ struct LeastSquaresResult(Copyable, Equatable, Writable):
 
     def __eq__(self, other: Self) -> Bool:
         """Return whether every public report field is exactly equal."""
-        if len(self.parameters) != len(other.parameters) or len(
-            self.active_bounds
-        ) != len(other.active_bounds):
+        if (
+            len(self.parameters) != len(other.parameters)
+            or len(self.residuals) != len(other.residuals)
+            or len(self.active_bounds) != len(other.active_bounds)
+        ):
             return False
         for index in range(len(self.parameters)):
             if (
                 self.parameters[index] != other.parameters[index]
                 or self.active_bounds[index] != other.active_bounds[index]
             ):
+                return False
+        for index in range(len(self.residuals)):
+            if self.residuals[index] != other.residuals[index]:
                 return False
         return (
             self.cost == other.cost
@@ -117,18 +126,39 @@ struct LeastSquaresResult(Copyable, Equatable, Writable):
     def validate(self) raises:
         """Revalidate public report fields after possible caller mutation."""
         if len(self.parameters) == 0:
-            raise Error("least-squares result requires at least one parameter")
+            raise Error(
+                String(
+                    "result parameters must contain at least one parameter; got ",
+                    len(self.parameters),
+                )
+            )
         for index in range(len(self.parameters)):
             if not isfinite(self.parameters[index]):
-                raise Error("result parameters must be finite")
+                raise Error(
+                    String(
+                        "result parameters[",
+                        index,
+                        "] must be finite; got ",
+                        self.parameters[index],
+                    )
+                )
+        for index in range(len(self.residuals)):
+            if not isfinite(self.residuals[index]):
+                raise Error(
+                    String(
+                        "result residuals[",
+                        index,
+                        "] must be finite; got ",
+                        self.residuals[index],
+                    )
+                )
         if len(self.active_bounds) != len(self.parameters):
             raise Error(
                 String(
-                    "active_bounds has ",
+                    "active_bounds count ",
                     len(self.active_bounds),
-                    " entries for ",
+                    " must equal result parameters count ",
                     len(self.parameters),
-                    " parameters",
                 )
             )
         for index in range(len(self.active_bounds)):
@@ -142,16 +172,50 @@ struct LeastSquaresResult(Copyable, Equatable, Writable):
                     )
                 )
         if not isfinite(self.cost) or self.cost < 0.0:
-            raise Error("result cost must be finite and non-negative")
+            raise Error(
+                String("result cost must be finite and non-negative; got ", self.cost)
+            )
         if not isfinite(self.optimality) or self.optimality < 0.0:
-            raise Error("result optimality must be finite and non-negative")
+            raise Error(
+                String(
+                    "result optimality must be finite and non-negative; got ",
+                    self.optimality,
+                )
+            )
         if self.iterations < 0:
-            raise Error("iteration count must be non-negative")
+            raise Error(
+                String("iterations must be non-negative; got ", self.iterations)
+            )
         if self.residual_evaluations < 1:
-            raise Error("result requires at least one residual evaluation")
+            raise Error(
+                String(
+                    "residual_evaluations must be at least 1; got ",
+                    self.residual_evaluations,
+                )
+            )
         if self.jacobian_evaluations < 0:
-            raise Error("Jacobian evaluation count must be non-negative")
+            raise Error(
+                String(
+                    "jacobian_evaluations must be non-negative; got ",
+                    self.jacobian_evaluations,
+                )
+            )
         if self.iterations > self.residual_evaluations - 1:
-            raise Error("iteration count cannot exceed completed trials")
+            raise Error(
+                String(
+                    "iterations ",
+                    self.iterations,
+                    " cannot exceed completed trials ",
+                    self.residual_evaluations - 1,
+                    " (residual_evaluations - 1)",
+                )
+            )
         if self.jacobian_evaluations > self.residual_evaluations:
-            raise Error("Jacobian evaluations cannot exceed residual evaluations")
+            raise Error(
+                String(
+                    "jacobian_evaluations ",
+                    self.jacobian_evaluations,
+                    " cannot exceed residual_evaluations ",
+                    self.residual_evaluations,
+                )
+            )

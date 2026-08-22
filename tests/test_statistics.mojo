@@ -1,4 +1,5 @@
 from nerai import (
+    Bounds,
     FitReport,
     FitStatistics,
     JacobianScheme,
@@ -11,7 +12,8 @@ from nerai import (
     least_squares,
 )
 from std.collections import List
-from std.math import abs, exp
+from std.math import abs, exp, sqrt
+from std.memory import bitcast
 from std.testing import TestSuite, assert_equal, assert_raises, assert_true
 from std.utils.numerics import inf
 
@@ -115,6 +117,38 @@ struct RankDeficientModel(Copyable, ResidualModel):
         ]
 
 
+struct ExactFitStatisticsModel(Copyable, ResidualModel):
+    def __init__(out self):
+        pass
+
+    def residual_count(self) -> Int:
+        return 4
+
+    def residuals(mut self, parameters: List[Float64]) raises -> List[Float64]:
+        return [
+            parameters[0] - 2.0,
+            2.0 * parameters[0] - 4.0,
+            3.0 * parameters[0] - 6.0,
+            4.0 * parameters[0] - 8.0,
+        ]
+
+
+struct UpperEdgeStatisticsModel(Copyable, ResidualModel):
+    def __init__(out self):
+        pass
+
+    def residual_count(self) -> Int:
+        return 4
+
+    def residuals(mut self, parameters: List[Float64]) raises -> List[Float64]:
+        return [
+            parameters[0] - 0.1,
+            2.0 * parameters[0] - 0.3,
+            3.0 * parameters[0] - 0.2,
+            4.0 * parameters[0] - 0.5,
+        ]
+
+
 def make_result(parameters: List[Float64]) raises -> LeastSquaresResult:
     return LeastSquaresResult(
         parameters,
@@ -176,6 +210,26 @@ def test_statistics_match_scipy_curve_fit_fixture() raises:
     assert_true(abs(statistics.correlation(0, 0) - 1.0) <= 1.0e-12)
 
 
+def test_absolute_sigma_skips_reduced_chi_squared_rescaling() raises:
+    var weights = List[Float64](length=25, fill=0.0)
+    for index in range(25):
+        weights[index] = 1.0 / (0.03 + 0.002 * Float64(index))
+    var problem = LeastSquaresProblem(ScipyDecayModel(), [1.0, 1.0], weights=weights)
+    var result = least_squares(problem)
+    var relative = fit_statistics(problem, result)
+    var absolute = fit_statistics(problem, result, absolute_sigma=True)
+
+    assert_equal(absolute.degrees_of_freedom, relative.degrees_of_freedom)
+    assert_true(absolute.reduced_chi_squared == relative.reduced_chi_squared)
+    var scale = sqrt(relative.reduced_chi_squared)
+    for index in range(2):
+        assert_relative_close(
+            absolute.standard_error(index),
+            relative.standard_error(index) / scale,
+            1.0e-12,
+        )
+
+
 def test_central_scheme_matches_fixture_with_more_residual_calls() raises:
     var forward_problem = LeastSquaresProblem(ScipyDecayModel(), [1.0, 1.0])
     var central_problem = LeastSquaresProblem(
@@ -205,8 +259,45 @@ def test_rank_deficient_jacobian_has_a_specific_error() raises:
         _ = fit_statistics(problem, result)
 
 
+def test_exact_fit_has_zero_covariance_and_standard_error() raises:
+    var problem = LeastSquaresProblem(ExactFitStatisticsModel(), [1.0])
+    var result = make_result([2.0])
+    var statistics = fit_statistics(problem, result)
+
+    assert_equal(statistics.degrees_of_freedom, 3)
+    assert_true(statistics.reduced_chi_squared == 0.0)
+    assert_true(statistics.covariance(0, 0) == 0.0)
+    assert_true(statistics.standard_error(0) == 0.0)
+    with assert_raises(contains="correlation is undefined when standard error is zero"):
+        _ = statistics.correlation(0, 0)
+
+
+def test_correlation_rejects_an_underflowed_standard_error_product() raises:
+    var statistics = FitStatistics(
+        [0.0, 0.0, 0.0, 0.0],
+        [1.0e-300, 1.0e-300],
+        degrees_of_freedom=1,
+        reduced_chi_squared=0.0,
+    )
+    with assert_raises(contains="standard-error product underflows"):
+        _ = statistics.correlation(0, 1)
+
+
+def test_statistics_jacobian_accepts_one_ulp_below_an_upper_bound() raises:
+    var predecessor = bitcast[DType.float64](bitcast[DType.uint64](1.0) - UInt64(1))
+    var problem = LeastSquaresProblem(
+        UpperEdgeStatisticsModel(),
+        [predecessor],
+        bounds=Bounds([0.0], [1.0]),
+    )
+    var statistics = fit_statistics(problem, make_result([predecessor]))
+
+    assert_equal(statistics.degrees_of_freedom, 3)
+    assert_true(statistics.standard_error(0) > 0.0)
+
+
 def test_statistics_reject_invalid_storage() raises:
-    with assert_raises(contains="at least one parameter"):
+    with assert_raises(contains="fit statistics require at least one parameter; got 0"):
         _ = FitStatistics(
             List[Float64](),
             List[Float64](),
@@ -227,17 +318,17 @@ def test_statistics_reject_invalid_storage() raises:
             degrees_of_freedom=1,
             reduced_chi_squared=1.0,
         )
-    with assert_raises(contains="diagonal entry 0 must be positive"):
+    with assert_raises(contains="diagonal entry 0 must be non-negative"):
         _ = FitStatistics(
-            [0.0],
+            [-1.0],
             [1.0],
             degrees_of_freedom=1,
             reduced_chi_squared=1.0,
         )
-    with assert_raises(contains="standard error 0 must be finite and positive"):
+    with assert_raises(contains="standard error 0 must be finite and non-negative"):
         _ = FitStatistics(
             [1.0],
-            [0.0],
+            [-1.0],
             degrees_of_freedom=1,
             reduced_chi_squared=1.0,
         )
@@ -354,6 +445,45 @@ def test_report_rounding_examples_and_fallback_are_exact() raises:
         "\n",
         "degrees of freedom    7\n",
         "reduced chi-squared   0.5\n",
+    )
+    assert_equal(String(report), expected)
+
+
+def test_report_uses_names_and_marks_active_bounds_without_uncertainty() raises:
+    var result = LeastSquaresResult(
+        [2.4873608, 1.0],
+        cost=0.125,
+        optimality=0.25,
+        iterations=0,
+        residual_evaluations=1,
+        jacobian_evaluations=0,
+        termination=TerminationReason.GRADIENT_TOLERANCE,
+        active_bounds=Optional[List[Int]]([0, 1]),
+    )
+    var statistics = FitStatistics(
+        [1.0, 0.0, 0.0, 1.0],
+        [0.0282163, 0.5],
+        degrees_of_freedom=3,
+        reduced_chi_squared=0.125,
+    )
+    var report = FitReport(
+        result,
+        statistics,
+        parameter_names=["a_parameter_name_longer_than_22_bytes", "rate"],
+    )
+    var expected = String(
+        "termination           gradient tolerance\n",
+        "converged             yes\n",
+        "cost                  0.125\n",
+        "optimality            0.25\n",
+        "iterations            0\n",
+        "residual evaluations  1\n",
+        "jacobian evaluations  0\n",
+        "a_parameter_name_longer_than_22_bytes  2.487 +/- 0.028\n",
+        "rate                  1.0 (at upper bound)\n",
+        "active bounds[1]      upper\n",
+        "degrees of freedom    3\n",
+        "reduced chi-squared   0.125\n",
     )
     assert_equal(String(report), expected)
 

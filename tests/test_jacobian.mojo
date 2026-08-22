@@ -1,10 +1,11 @@
-from nerai import ResidualModel
+from nerai import Bounds, ResidualModel
 from nerai._jacobian import (
     _central_difference_jacobian,
     _forward_difference_jacobian,
     _forward_difference_jacobian_without_base,
 )
 from std.math import abs, cos, exp, sin
+from std.memory import bitcast
 from std.testing import TestSuite, assert_equal, assert_raises, assert_true
 from std.utils.numerics import inf
 
@@ -115,6 +116,22 @@ struct RaisingModel(Copyable, ResidualModel):
     def residuals(mut self, parameters: List[Float64]) raises -> List[Float64]:
         self.calls += 1
         raise Error("Jacobian model failure")
+
+
+struct BoundedDomainModel(Copyable, ResidualModel):
+    var calls: Int
+
+    def __init__(out self):
+        self.calls = 0
+
+    def residual_count(self) -> Int:
+        return 1
+
+    def residuals(mut self, parameters: List[Float64]) raises -> List[Float64]:
+        self.calls += 1
+        if parameters[0] <= 0.0 or parameters[0] >= 1.0:
+            raise Error("bounded finite difference escaped the open domain")
+        return [parameters[0] * parameters[0]]
 
 
 def assert_close(
@@ -229,6 +246,59 @@ def test_central_difference_is_more_accurate_for_a_cubic() raises:
     assert_true(abs(central.get(0, 0) - 12.0) < abs(forward.get(0, 0) - 12.0))
     assert_equal(forward_evaluations, 1)
     assert_equal(central_evaluations, 2)
+
+
+def test_bounded_differences_stay_inside_and_switch_direction() raises:
+    var parameter = 1.0 - 1.0e-12
+    var base = parameter * parameter
+    var bounds = Bounds([0.0], [1.0])
+    var forward_model = BoundedDomainModel()
+    var central_model = BoundedDomainModel()
+    var forward_evaluations = 0
+    var central_evaluations = 0
+    var forward = _forward_difference_jacobian(
+        forward_model,
+        [parameter],
+        [base],
+        forward_evaluations,
+        relative_step=1.0e-3,
+        bounds=bounds.copy(),
+    )
+    var central = _central_difference_jacobian(
+        central_model,
+        [parameter],
+        [base],
+        central_evaluations,
+        relative_step=1.0e-3,
+        bounds=bounds.copy(),
+    )
+
+    assert_true(abs(forward.get(0, 0) - 2.0 * parameter) <= 1.1e-3)
+    assert_true(abs(central.get(0, 0) - 2.0 * parameter) <= 1.0e-10)
+    assert_equal(forward_model.calls, 1)
+    assert_equal(central_model.calls, 2)
+    assert_equal(forward_evaluations, 1)
+    assert_equal(central_evaluations, 2)
+
+
+def test_forward_difference_accepts_a_signed_inward_step_one_ulp_below_upper() raises:
+    # The representable predecessor of 1.0 is strictly feasible, but half of
+    # its one-ULP gap rounds onto the upper bound. Forward stepping must switch
+    # to a negative inward perturbation instead of rejecting its sign.
+    var parameter = bitcast[DType.float64](bitcast[DType.uint64](1.0) - UInt64(1))
+    var model = BoundedDomainModel()
+    var evaluations = 0
+    var jacobian = _forward_difference_jacobian(
+        model,
+        [parameter],
+        [parameter * parameter],
+        evaluations,
+        bounds=Bounds([0.0], [1.0]),
+    )
+
+    assert_true(abs(jacobian.get(0, 0) - 2.0 * parameter) <= 2.0e-8)
+    assert_equal(model.calls, 1)
+    assert_equal(evaluations, 1)
 
 
 def test_without_base_accounts_for_n_plus_one_calls() raises:

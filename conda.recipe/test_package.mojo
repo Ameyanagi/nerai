@@ -6,6 +6,7 @@ from nerai import (
     ResidualModel,
     TerminationReason,
     evaluate_loss,
+    least_squares,
     robust_cost,
 )
 from std.testing import assert_false, assert_true
@@ -53,3 +54,8 @@ def main() raises:
     assert_true(residuals[0] == 0.0)
     assert_true(residuals[1] == 0.0)
     assert_true(problem.model.calls == 1)
+
+    var fitted = least_squares(problem)
+    assert_true(fitted.converged())
+    assert_true(fitted.parameters[0] == 1.0)
+    assert_true(fitted.parameters[1] == -2.0)

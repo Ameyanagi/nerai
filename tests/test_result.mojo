@@ -7,6 +7,7 @@ from std.testing import (
     assert_raises,
     assert_true,
 )
+from std.utils.numerics import inf, nan
 
 
 def test_termination_categories_are_explicit() raises:
@@ -44,10 +45,13 @@ def test_result_preserves_solver_report() raises:
     assert_true(result.termination == TerminationReason.GRADIENT_TOLERANCE)
     assert_true(result.converged())
     assert_equal(result.active_bounds, [0, 0])
+    assert_equal(result.residuals, List[Float64]())
 
 
 def test_result_rejects_invalid_reports() raises:
-    with assert_raises(contains="at least one parameter"):
+    with assert_raises(
+        contains="result parameters must contain at least one parameter; got 0"
+    ):
         _ = LeastSquaresResult(
             List[Float64](),
             cost=0.0,
@@ -57,7 +61,19 @@ def test_result_rejects_invalid_reports() raises:
             jacobian_evaluations=0,
             termination=TerminationReason.MAX_ITERATIONS,
         )
-    with assert_raises(contains="cost must be finite and non-negative"):
+    with assert_raises(contains="result parameters[0] must be finite; got nan"):
+        _ = LeastSquaresResult(
+            [nan[DType.float64]()],
+            cost=0.0,
+            optimality=0.0,
+            iterations=0,
+            residual_evaluations=1,
+            jacobian_evaluations=0,
+            termination=TerminationReason.NUMERICAL_FAILURE,
+        )
+    with assert_raises(
+        contains="result cost must be finite and non-negative; got -1.0"
+    ):
         _ = LeastSquaresResult(
             [1.0],
             cost=-1.0,
@@ -67,7 +83,29 @@ def test_result_rejects_invalid_reports() raises:
             jacobian_evaluations=0,
             termination=TerminationReason.NUMERICAL_FAILURE,
         )
-    with assert_raises(contains="Jacobian evaluation count must be non-negative"):
+    with assert_raises(
+        contains="result optimality must be finite and non-negative; got -1.0"
+    ):
+        _ = LeastSquaresResult(
+            [1.0],
+            cost=0.0,
+            optimality=-1.0,
+            iterations=0,
+            residual_evaluations=1,
+            jacobian_evaluations=0,
+            termination=TerminationReason.NUMERICAL_FAILURE,
+        )
+    with assert_raises(contains="iterations must be non-negative; got -1"):
+        _ = LeastSquaresResult(
+            [1.0],
+            cost=0.0,
+            optimality=0.0,
+            iterations=-1,
+            residual_evaluations=1,
+            jacobian_evaluations=0,
+            termination=TerminationReason.MAX_ITERATIONS,
+        )
+    with assert_raises(contains="jacobian_evaluations must be non-negative; got -1"):
         _ = LeastSquaresResult(
             [1.0],
             cost=0.0,
@@ -77,7 +115,7 @@ def test_result_rejects_invalid_reports() raises:
             jacobian_evaluations=-1,
             termination=TerminationReason.MAX_EVALUATIONS,
         )
-    with assert_raises(contains="at least one residual evaluation"):
+    with assert_raises(contains="residual_evaluations must be at least 1; got 0"):
         _ = LeastSquaresResult(
             [1.0],
             cost=0.0,
@@ -87,7 +125,11 @@ def test_result_rejects_invalid_reports() raises:
             jacobian_evaluations=0,
             termination=TerminationReason.MAX_EVALUATIONS,
         )
-    with assert_raises(contains="iteration count cannot exceed completed trials"):
+    with assert_raises(
+        contains=(
+            "iterations 1 cannot exceed completed trials 0 (residual_evaluations - 1)"
+        )
+    ):
         _ = LeastSquaresResult(
             [1.0],
             cost=0.0,
@@ -97,7 +139,9 @@ def test_result_rejects_invalid_reports() raises:
             jacobian_evaluations=0,
             termination=TerminationReason.MAX_ITERATIONS,
         )
-    with assert_raises(contains="Jacobian evaluations cannot exceed residual"):
+    with assert_raises(
+        contains="jacobian_evaluations 2 cannot exceed residual_evaluations 1"
+    ):
         _ = LeastSquaresResult(
             [1.0],
             cost=0.0,
@@ -107,7 +151,9 @@ def test_result_rejects_invalid_reports() raises:
             jacobian_evaluations=2,
             termination=TerminationReason.MAX_EVALUATIONS,
         )
-    with assert_raises(contains="active_bounds has 2 entries for 1 parameters"):
+    with assert_raises(
+        contains="active_bounds count 2 must equal result parameters count 1"
+    ):
         _ = LeastSquaresResult(
             [1.0],
             cost=0.0,
@@ -129,6 +175,30 @@ def test_result_rejects_invalid_reports() raises:
             termination=TerminationReason.MAX_EVALUATIONS,
             active_bounds=Optional[List[Int]]([2]),
         )
+    with assert_raises(contains="result residuals[1] must be finite; got inf"):
+        _ = LeastSquaresResult(
+            [1.0, 2.0],
+            cost=0.0,
+            optimality=0.0,
+            iterations=0,
+            residual_evaluations=1,
+            jacobian_evaluations=0,
+            termination=TerminationReason.MAX_EVALUATIONS,
+            residuals=[0.0, inf[DType.float64]()],
+        )
+
+    # A recorded residual vector is not constrained by the parameter count.
+    var short_residuals = LeastSquaresResult(
+        [1.0, 2.0],
+        cost=0.0,
+        optimality=0.0,
+        iterations=0,
+        residual_evaluations=1,
+        jacobian_evaluations=0,
+        termination=TerminationReason.MAX_EVALUATIONS,
+        residuals=[0.5],
+    )
+    assert_equal(short_residuals.residuals, [0.5])
 
 
 def test_termination_reasons_are_distinct_nominal_values() raises:
@@ -154,7 +224,9 @@ def test_mutated_numeric_report_can_be_revalidated() raises:
     result.validate()
 
     result.cost = -1.0
-    with assert_raises(contains="result cost must be finite and non-negative"):
+    with assert_raises(
+        contains="result cost must be finite and non-negative; got -1.0"
+    ):
         result.validate()
 
     result.termination = TerminationReason.NUMERICAL_FAILURE
@@ -171,6 +243,7 @@ def test_result_equality_compares_complete_public_reports() raises:
         residual_evaluations=5,
         jacobian_evaluations=2,
         termination=TerminationReason.GRADIENT_TOLERANCE,
+        residuals=[0.25, -0.5, 0.75],
     )
     var same = LeastSquaresResult(
         [1.0, -2.0],
@@ -180,6 +253,7 @@ def test_result_equality_compares_complete_public_reports() raises:
         residual_evaluations=5,
         jacobian_evaluations=2,
         termination=TerminationReason.GRADIENT_TOLERANCE,
+        residuals=[0.25, -0.5, 0.75],
     )
     assert_true(first == same)
 
@@ -189,6 +263,9 @@ def test_result_equality_compares_complete_public_reports() raises:
     same.active_bounds[1] = -1
     assert_false(first == same)
     same.active_bounds[1] = 0
+    same.residuals[2] = 1.0
+    assert_false(first == same)
+    same.residuals[2] = 0.75
     same.termination = TerminationReason.STEP_TOLERANCE
     assert_true(first != same)
 

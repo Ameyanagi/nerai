@@ -8,7 +8,7 @@ from std.collections import List
 from std.math import exp
 
 
-struct GaussianPeak(Copyable, CurveModel):
+struct GaussianPeak(CurveModel):
     def __init__(out self):
         pass
 
@@ -110,6 +110,12 @@ def main() raises:
         -0.0032691202556011075,
         0.011488610380763598,
     ]
-    var fit = CurveFit(GaussianPeak(), x, y, [1.0, 0.0, 2.0])
+    var fit = CurveFit(
+        GaussianPeak(),
+        x,
+        y,
+        [1.0, 0.0, 2.0],
+        parameter_names=["amplitude", "center", "width"],
+    )
 
     print(fit.solve(), end="")

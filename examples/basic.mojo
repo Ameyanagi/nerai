@@ -6,7 +6,7 @@ from nerai import (
 from std.math import exp
 
 
-struct ExponentialDecayModel(Copyable, ResidualModel):
+struct ExponentialDecayModel(ResidualModel):
     def __init__(out self):
         pass
 

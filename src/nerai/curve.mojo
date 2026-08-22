@@ -44,28 +44,17 @@ struct _CurveAdapter[M: CurveModel](ResidualModel):
             )
         if len(t) < 1:
             raise Error("curve fitting requires at least one t/y observation")
-        if len(t) <= parameter_count:
-            var degrees_of_freedom = len(t) - parameter_count
-            if degrees_of_freedom == 0:
-                raise Error(
-                    String(
-                        len(t),
-                        " observations for ",
-                        parameter_count,
-                        (
-                            " parameters leaves zero degrees of freedom; add "
-                            "observations or fix parameters"
-                        ),
-                    )
-                )
+        if len(t) < parameter_count:
             raise Error(
                 String(
+                    "t/y observation count ",
                     len(t),
-                    " observations for ",
+                    " is less than parameter count ",
                     parameter_count,
-                    " parameters leaves ",
-                    degrees_of_freedom,
-                    " degrees of freedom; add observations or fix parameters",
+                    (
+                        "; curve fitting requires at least as many observations "
+                        "as parameters — add observations or fix parameters"
+                    ),
                 )
             )
 
@@ -108,13 +97,20 @@ struct CurveFit[M: CurveModel](Movable):
 
     Convention: Input ``Span`` values are validated and copied once into owned
     storage during construction, so caller buffers need not outlive the fit.
+    Initial guesses on or outside a bound are nudged to the nearest strictly
+    interior point, following SciPy. Optional ``parameter_names`` label the
+    result report and enable name-based parameter and standard-error lookup.
     ``CurveModel.values(parameters, t) - y`` defines the raw residuals. When
     ``sigma`` is supplied, Nerai weights are ``1 / sigma`` and multiply each
-    residual once. Together with ``fit_statistics``, this matches SciPy
-    ``curve_fit(..., absolute_sigma=False)`` covariance semantics.
+    residual once. By default this matches SciPy
+    ``curve_fit(..., absolute_sigma=False)`` covariance semantics; the sigma
+    overload's ``absolute_sigma=True`` skips reduced-chi-squared rescaling for
+    known measurement uncertainties.
     """
 
     var _problem: LeastSquaresProblem[_CurveAdapter[Self.M]]
+    var _absolute_sigma: Bool
+    var _parameter_names: List[String]
 
     def __init__(
         out self,
@@ -123,10 +119,16 @@ struct CurveFit[M: CurveModel](Movable):
         y: Span[Float64, ...],
         initial_parameters: List[Float64],
         *,
+        parameter_names: List[String] = List[String](),
         bounds: Optional[Bounds] = None,
         options: Optional[LeastSquaresOptions] = None,
     ) raises:
-        """Own and validate an unweighted curve-fitting problem."""
+        """Own and validate an unweighted curve-fitting problem.
+
+        An empty ``parameter_names`` list (the default) leaves parameters
+        labeled positionally.
+        """
+        _validate_parameter_names(parameter_names, len(initial_parameters))
         var adapter = _CurveAdapter(model^, t, y, len(initial_parameters))
         self._problem = LeastSquaresProblem(
             adapter^,
@@ -134,6 +136,8 @@ struct CurveFit[M: CurveModel](Movable):
             bounds=bounds,
             options=options,
         )
+        self._absolute_sigma = False
+        self._parameter_names = parameter_names.copy()
 
     def __init__(
         out self,
@@ -143,10 +147,17 @@ struct CurveFit[M: CurveModel](Movable):
         initial_parameters: List[Float64],
         *,
         sigma: Span[Float64, ...],
+        absolute_sigma: Bool = False,
+        parameter_names: List[String] = List[String](),
         bounds: Optional[Bounds] = None,
         options: Optional[LeastSquaresOptions] = None,
     ) raises:
-        """Own and validate a curve fit weighted by inverse ``sigma``."""
+        """Own and validate a curve fit weighted by inverse ``sigma``.
+
+        An empty ``parameter_names`` list (the default) leaves parameters
+        labeled positionally.
+        """
+        _validate_parameter_names(parameter_names, len(initial_parameters))
         if len(sigma) != len(y):
             raise Error(
                 String(
@@ -178,39 +189,155 @@ struct CurveFit[M: CurveModel](Movable):
             bounds=bounds,
             options=options,
         )
+        self._absolute_sigma = absolute_sigma
+        self._parameter_names = parameter_names.copy()
 
     def solve(mut self) raises -> CurveFitResult:
         """Fit from the stored initial values and return result statistics.
 
-        Solver failure terminations remain inspectable in the returned result
-        when statistics succeed. Model and statistics errors propagate.
+        Solver errors propagate. If post-fit statistics cannot be estimated,
+        the returned solver result remains available and reports the reason.
         """
         var result = least_squares(self._problem)
-        var statistics = fit_statistics(self._problem, result)
-        return CurveFitResult(result, statistics)
+        var statistics: FitStatistics
+        try:
+            statistics = fit_statistics(
+                self._problem,
+                result,
+                absolute_sigma=self._absolute_sigma,
+            )
+        except error:
+            return CurveFitResult(
+                result,
+                Optional[FitStatistics](),
+                statistics_message=String(error),
+                parameter_names=self._parameter_names,
+            )
+        return CurveFitResult(
+            result,
+            Optional(statistics^),
+            parameter_names=self._parameter_names,
+        )
 
 
 struct CurveFitResult(Copyable, Writable):
-    """A public least-squares result and its uncertainty statistics."""
+    """A public least-squares result and optional uncertainty statistics."""
 
     var result: LeastSquaresResult
-    var statistics: FitStatistics
+    var statistics: Optional[FitStatistics]
+    var statistics_message: String
+    var parameter_names: List[String]
 
     def __init__(
-        out self, result: LeastSquaresResult, statistics: FitStatistics
+        out self,
+        result: LeastSquaresResult,
+        statistics: Optional[FitStatistics],
+        *,
+        statistics_message: String = "",
+        parameter_names: List[String] = List[String](),
     ) raises:
-        """Copy a result and matching statistics into one curve-fit result."""
+        """Copy a result and either matching statistics or their failure reason.
+
+        An empty ``parameter_names`` list (the default) leaves parameters
+        labeled positionally.
+        """
         result.validate()
-        statistics.validate()
-        _ = FitReport(result, statistics)
+        _validate_parameter_names(parameter_names, len(result.parameters))
+        if statistics:
+            var present_statistics = statistics.value().copy()
+            present_statistics.validate()
+            _ = FitReport(
+                result,
+                present_statistics,
+                parameter_names=parameter_names,
+            )
+            if statistics_message.byte_length() != 0:
+                raise Error(
+                    String(
+                        "statistics_message must be empty when statistics are ",
+                        "present; got ",
+                        statistics_message,
+                    )
+                )
+        elif statistics_message.byte_length() == 0:
+            raise Error(
+                "statistics_message must describe why statistics are absent; "
+                "got an empty string — pass the fit_statistics error message"
+            )
         self.result = result.copy()
         self.statistics = statistics.copy()
+        self.statistics_message = String(statistics_message)
+        self.parameter_names = parameter_names.copy()
 
     def validate(self) raises:
-        """Revalidate both public fields and their matching dimensions."""
+        """Revalidate both public fields and their matching state."""
         self.result.validate()
-        self.statistics.validate()
-        _ = FitReport(self.result, self.statistics)
+        _validate_parameter_names(self.parameter_names, len(self.result.parameters))
+        if self.statistics:
+            self.statistics.value().validate()
+            _ = FitReport(
+                self.result,
+                self.statistics.value(),
+                parameter_names=self.parameter_names,
+            )
+            if self.statistics_message.byte_length() != 0:
+                raise Error(
+                    String(
+                        "statistics_message must be empty when statistics are ",
+                        "present; got ",
+                        self.statistics_message,
+                    )
+                )
+        elif self.statistics_message.byte_length() == 0:
+            raise Error(
+                "statistics_message must describe why statistics are absent; "
+                "got an empty string — pass the fit_statistics error message"
+            )
+
+    def residuals(self) -> List[Float64]:
+        """Return a copy of the raw residual vector at the fitted parameters."""
+        return self.result.residuals.copy()
+
+    def parameter(self, name: String) raises -> Float64:
+        """Return one fitted parameter selected by its configured name."""
+        return self.result.parameters[self._parameter_index(name)]
+
+    def standard_error(self, name: String) raises -> Float64:
+        """Return one standard error selected by its configured name."""
+        var index = self._parameter_index(name)
+        if not self.statistics:
+            raise Error(
+                String(
+                    "standard_error name argument requires estimated statistics; ",
+                    'got "',
+                    name,
+                    '" while statistics were unavailable: ',
+                    self.statistics_message,
+                    " — use parameter(name) for the fitted value or address the ",
+                    "statistics failure",
+                )
+            )
+        return self.statistics.value().standard_error(index)
+
+    def _parameter_index(self, name: String) raises -> Int:
+        for index in range(len(self.parameter_names)):
+            if self.parameter_names[index] == name:
+                return index
+        raise Error(
+            String(
+                'name argument must match one of parameter_names; got "',
+                name,
+                '"; valid names are ',
+                _format_parameter_names(self.parameter_names),
+                (
+                    " — pass one of the listed names" if len(self.parameter_names)
+                    > 0 else (
+                        " — construct CurveFit with parameter_names, then pass one "
+                        "of those names"
+                    )
+                ),
+            )
+        )
 
     def __str__(self) -> String:
         """Return exactly the stable stderr-aware ``FitReport`` block."""
@@ -220,8 +347,103 @@ struct CurveFitResult(Copyable, Writable):
 
     def write_to[W: Writer](self, mut writer: W):
         """Write exactly the stable stderr-aware ``FitReport`` block."""
-        try:
-            var report = FitReport(self.result, self.statistics)
-            report.write_to(writer)
-        except:
-            writer.write("invalid curve-fit result\n")
+        if self.statistics:
+            try:
+                var report = FitReport(
+                    self.result,
+                    self.statistics.value(),
+                    parameter_names=self.parameter_names,
+                )
+                report.write_to(writer)
+            except:
+                writer.write("invalid curve-fit result\n")
+            return
+
+        writer.write("termination           ", self.result.termination, "\n")
+        writer.write(
+            "converged             ",
+            "yes" if self.result.converged() else "no",
+            "\n",
+        )
+        writer.write("cost                  ", self.result.cost, "\n")
+        writer.write("optimality            ", self.result.optimality, "\n")
+        writer.write("iterations            ", self.result.iterations, "\n")
+        writer.write("residual evaluations  ", self.result.residual_evaluations, "\n")
+        writer.write("jacobian evaluations  ", self.result.jacobian_evaluations, "\n")
+        for index in range(len(self.result.parameters)):
+            var label = String("parameters[", index, "]")
+            if len(self.parameter_names) > 0:
+                label = String(self.parameter_names[index])
+            _write_result_label(writer, label)
+            if self.result.active_bounds[index] < 0:
+                writer.write(
+                    String(self.result.parameters[index]),
+                    " (at lower bound)\n",
+                )
+            elif self.result.active_bounds[index] > 0:
+                writer.write(
+                    String(self.result.parameters[index]),
+                    " (at upper bound)\n",
+                )
+            else:
+                writer.write(self.result.parameters[index], "\n")
+        for index in range(len(self.result.active_bounds)):
+            if self.result.active_bounds[index] == 0:
+                continue
+            var label = String("active bounds[", index, "]")
+            _write_result_label(writer, label)
+            if self.result.active_bounds[index] < 0:
+                writer.write("lower\n")
+            else:
+                writer.write("upper\n")
+        writer.write(
+            "standard errors       not estimated: ",
+            self.statistics_message,
+            "\n",
+        )
+
+
+def _validate_parameter_names(
+    parameter_names: List[String], parameter_count: Int
+) raises:
+    if len(parameter_names) == 0:
+        return
+    if len(parameter_names) != parameter_count:
+        raise Error(
+            String(
+                "parameter_names has ",
+                len(parameter_names),
+                " entries but initial_parameters has ",
+                parameter_count,
+                " entries; provide exactly one name per initial parameter",
+            )
+        )
+    for index in range(len(parameter_names)):
+        if parameter_names[index].byte_length() == 0:
+            raise Error(
+                String(
+                    "parameter_names[",
+                    index,
+                    "] must not be empty; got an empty string — provide a ",
+                    "non-empty parameter name",
+                )
+            )
+
+
+def _format_parameter_names(parameter_names: List[String]) -> String:
+    var result = String("[")
+    for index in range(len(parameter_names)):
+        if index != 0:
+            result += ", "
+        result += String('"', parameter_names[index], '"')
+    result += "]"
+    return result^
+
+
+def _write_result_label[W: Writer](mut writer: W, label: String):
+    writer.write(label)
+    if label.byte_length() >= 22:
+        writer.write("  ")
+        return
+    for _ in range(label.byte_length(), 22):
+        writer.write(" ")
