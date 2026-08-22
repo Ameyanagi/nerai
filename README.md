@@ -11,7 +11,11 @@ For a [Pixi](https://pixi.sh/) project, add the Nerai channel to
 
 ```toml
 [workspace]
-channels = ["https://ameyanagi.github.io/mojo-channel", "conda-forge"]
+channels = [
+    "https://ameyanagi.github.io/mojo-channel",
+    "https://conda.modular.com/max",
+    "conda-forge",
+]
 ```
 
 Then add the package:
