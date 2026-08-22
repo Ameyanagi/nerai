@@ -6,6 +6,7 @@ from nerai import (
 )
 from std.collections import List
 from std.math import abs, exp
+from std.memory import bitcast
 from std.testing import (
     TestSuite,
     assert_equal,
@@ -59,6 +60,19 @@ struct RecordingBoundsModel(Copyable, ResidualModel):
         for index in range(12):
             residuals[index] = parameters[0] * exp(-parameters[1] * t[index]) - y[index]
         return residuals^
+
+
+struct OpenUnitDomainModel(Copyable, ResidualModel):
+    def __init__(out self):
+        pass
+
+    def residual_count(self) -> Int:
+        return 2
+
+    def residuals(mut self, parameters: List[Float64]) raises -> List[Float64]:
+        if parameters[0] <= 0.0 or parameters[0] >= 1.0:
+            raise Error("solver evaluated outside the open bounded domain")
+        return [parameters[0] - 0.25, 2.0 * parameters[0] - 0.5]
 
 
 def positive_bounds() raises -> Bounds:
@@ -223,6 +237,31 @@ def test_bounded_fit_is_strictly_feasible_and_reports_active_rate() raises:
     assert_true(abs(bounded.parameters[0] - 0.5836105665926237) <= 1.0e-3)
     assert_equal(bounded.active_bounds, [0, -1])
     assert_true(String(bounded).endswith("active bounds[1]      lower\n"))
+
+
+def test_solver_jacobian_respects_an_upper_bound_near_the_initial_point() raises:
+    var problem = LeastSquaresProblem(
+        OpenUnitDomainModel(),
+        [1.0 - 1.0e-12],
+        bounds=Bounds([0.0], [1.0]),
+    )
+    var result = least_squares(problem)
+
+    assert_true(result.converged())
+    assert_true(abs(result.parameters[0] - 0.25) <= 1.0e-8)
+
+
+def test_solver_accepts_the_representable_predecessor_of_an_upper_bound() raises:
+    var predecessor = bitcast[DType.float64](bitcast[DType.uint64](1.0) - UInt64(1))
+    var problem = LeastSquaresProblem(
+        OpenUnitDomainModel(),
+        [predecessor],
+        bounds=Bounds([0.0], [1.0]),
+    )
+    var result = least_squares(problem)
+
+    assert_true(result.converged())
+    assert_true(abs(result.parameters[0] - 0.25) <= 1.0e-8)
 
 
 def test_bounded_solves_are_exactly_deterministic() raises:

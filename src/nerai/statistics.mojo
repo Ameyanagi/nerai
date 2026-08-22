@@ -11,7 +11,7 @@ from ._jacobian import (
     _forward_difference_jacobian,
 )
 from ._kernel import _DenseMatrix, _jt_j, _solve_spd
-from ._objective import _build_objective_model
+from ._objective import _build_objective_model_owned
 from .options import JacobianScheme
 from .problem import LeastSquaresProblem, ResidualModel
 from .result import LeastSquaresResult
@@ -28,14 +28,20 @@ struct FitStatistics(Copyable, Equatable, Writable):
     produced by the solver's objective model. Reduced chi-squared is
     ``sum(model_residual_i^2) / (m_effective - n)``, where ``m_effective``
     counts positive-weight residuals. By default, covariance is
-    ``(J_model^T J_model)^-1 * reduced_chi_squared``, equivalently
-    ``(J^T W J)^-1 * reduced_chi_squared`` for the effective row weighting.
-    This matches SciPy ``curve_fit(..., absolute_sigma=False)``. Passing
+    ``(J_model^T J_model)^-1 * reduced_chi_squared``. With linear loss,
+    ``J_model = diag(w_i) J_raw``, so each observation contributes ``w_i^2``
+    to the normal matrix. This matches SciPy
+    ``curve_fit(..., absolute_sigma=False)``. Passing
     ``absolute_sigma=True`` to ``fit_statistics`` omits the reduced-chi-squared
-    scale and returns ``(J^T W J)^-1`` for known measurement uncertainties.
+    scale and returns ``(J_model^T J_model)^-1`` for known measurement
+    uncertainties.
     Computing statistics re-evaluates the model ``n + 1`` times with forward
     differences or ``2n + 1`` times with central differences at the result
     parameters; those callbacks are outside every solver evaluation budget.
+
+    Correlation is undefined when either parameter has zero standard error.
+    This occurs for an exact fit under the relative-noise convention above;
+    ``correlation()`` raises instead of returning a non-finite value.
     """
 
     var _covariance: List[Float64]
@@ -90,24 +96,24 @@ struct FitStatistics(Copyable, Equatable, Writable):
                     )
                 )
         for index in range(parameter_count):
-            if self._covariance[index * parameter_count + index] <= 0.0:
+            if self._covariance[index * parameter_count + index] < 0.0:
                 raise Error(
                     String(
                         "covariance diagonal entry ",
                         index,
-                        " must be positive; got ",
+                        " must be non-negative; got ",
                         self._covariance[index * parameter_count + index],
                     )
                 )
             if (
                 not isfinite(self._standard_errors[index])
-                or self._standard_errors[index] <= 0.0
+                or self._standard_errors[index] < 0.0
             ):
                 raise Error(
                     String(
                         "standard error ",
                         index,
-                        " must be finite and positive; got ",
+                        " must be finite and non-negative; got ",
                         self._standard_errors[index],
                     )
                 )
@@ -134,11 +140,25 @@ struct FitStatistics(Copyable, Equatable, Writable):
         """Return one trusted parameter standard error."""
         return self._standard_errors[index]
 
-    def correlation(self, row: Int, column: Int) -> Float64:
-        """Return covariance normalized by the two standard errors."""
-        return self.covariance(row, column) / (
-            self.standard_error(row) * self.standard_error(column)
-        )
+    def correlation(self, row: Int, column: Int) raises -> Float64:
+        """Return covariance normalized by two nonzero standard errors."""
+        var row_error = self.standard_error(row)
+        var column_error = self.standard_error(column)
+        if row_error == 0.0 or column_error == 0.0:
+            raise Error(
+                "correlation is undefined when standard error is zero; "
+                "inspect covariance or standard_error() for an exact fit"
+            )
+        var denominator = row_error * column_error
+        if denominator == 0.0:
+            raise Error(
+                "correlation is not representable because the standard-error "
+                "product underflows"
+            )
+        var result = self.covariance(row, column) / denominator
+        if not isfinite(result):
+            raise Error("correlation is not finite")
+        return result
 
     def parameter_count(self) -> Int:
         """Return the number of parameters described by these statistics."""
@@ -191,11 +211,14 @@ def fit_statistics[
     evaluated at ``result.parameters`` using the problem's finite-difference
     step. The resulting loss-scaled weighted objective model defines
     ``reduced_chi_squared = sum(model_residual_i^2) / (m_effective - n)`` and
-    ``covariance = (J^T W J)^-1 * reduced_chi_squared`` by default. With
-    ``absolute_sigma=True``, covariance is ``(J^T W J)^-1`` without that
-    rescaling. Unit weights with linear loss and the default match SciPy
-    ``curve_fit(..., absolute_sigma=False)``. These diagnostic callbacks are
-    outside every solver evaluation budget.
+    ``covariance = (J_model^T J_model)^-1 * reduced_chi_squared`` by default.
+    With linear loss, ``J_model = diag(w_i) J_raw``. With
+    ``absolute_sigma=True``, covariance is ``(J_model^T J_model)^-1`` without
+    the reduced-chi-squared rescaling. Unit weights with linear loss and the
+    default match SciPy ``curve_fit(..., absolute_sigma=False)``. These
+    diagnostic callbacks are outside every solver evaluation budget. Exact fits
+    return zero covariance and standard errors; correlation is undefined for
+    those zero-error rows.
 
     Raises:
         Error: If dimensions mismatch, degrees of freedom are not positive, the
@@ -226,6 +249,7 @@ def fit_statistics[
             raw_residuals,
             diagnostic_evaluations,
             relative_step=relative_step,
+            bounds=problem.bounds,
         )
     else:
         raw_jacobian = _forward_difference_jacobian(
@@ -234,10 +258,11 @@ def fit_statistics[
             raw_residuals,
             diagnostic_evaluations,
             relative_step=relative_step,
+            bounds=problem.bounds,
         )
-    var objective = _build_objective_model(
+    var objective = _build_objective_model_owned(
         raw_residuals,
-        raw_jacobian,
+        raw_jacobian^,
         problem.weights,
         problem.options.loss,
         problem.options.loss_scale,

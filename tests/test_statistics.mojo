@@ -1,4 +1,5 @@
 from nerai import (
+    Bounds,
     FitReport,
     FitStatistics,
     JacobianScheme,
@@ -12,6 +13,7 @@ from nerai import (
 )
 from std.collections import List
 from std.math import abs, exp, sqrt
+from std.memory import bitcast
 from std.testing import TestSuite, assert_equal, assert_raises, assert_true
 from std.utils.numerics import inf
 
@@ -112,6 +114,38 @@ struct RankDeficientModel(Copyable, ResidualModel):
             2.0 * combined - 2.0,
             3.0 * combined - 3.0,
             4.0 * combined - 4.0,
+        ]
+
+
+struct ExactFitStatisticsModel(Copyable, ResidualModel):
+    def __init__(out self):
+        pass
+
+    def residual_count(self) -> Int:
+        return 4
+
+    def residuals(mut self, parameters: List[Float64]) raises -> List[Float64]:
+        return [
+            parameters[0] - 2.0,
+            2.0 * parameters[0] - 4.0,
+            3.0 * parameters[0] - 6.0,
+            4.0 * parameters[0] - 8.0,
+        ]
+
+
+struct UpperEdgeStatisticsModel(Copyable, ResidualModel):
+    def __init__(out self):
+        pass
+
+    def residual_count(self) -> Int:
+        return 4
+
+    def residuals(mut self, parameters: List[Float64]) raises -> List[Float64]:
+        return [
+            parameters[0] - 0.1,
+            2.0 * parameters[0] - 0.3,
+            3.0 * parameters[0] - 0.2,
+            4.0 * parameters[0] - 0.5,
         ]
 
 
@@ -225,6 +259,43 @@ def test_rank_deficient_jacobian_has_a_specific_error() raises:
         _ = fit_statistics(problem, result)
 
 
+def test_exact_fit_has_zero_covariance_and_standard_error() raises:
+    var problem = LeastSquaresProblem(ExactFitStatisticsModel(), [1.0])
+    var result = make_result([2.0])
+    var statistics = fit_statistics(problem, result)
+
+    assert_equal(statistics.degrees_of_freedom, 3)
+    assert_true(statistics.reduced_chi_squared == 0.0)
+    assert_true(statistics.covariance(0, 0) == 0.0)
+    assert_true(statistics.standard_error(0) == 0.0)
+    with assert_raises(contains="correlation is undefined when standard error is zero"):
+        _ = statistics.correlation(0, 0)
+
+
+def test_correlation_rejects_an_underflowed_standard_error_product() raises:
+    var statistics = FitStatistics(
+        [0.0, 0.0, 0.0, 0.0],
+        [1.0e-300, 1.0e-300],
+        degrees_of_freedom=1,
+        reduced_chi_squared=0.0,
+    )
+    with assert_raises(contains="standard-error product underflows"):
+        _ = statistics.correlation(0, 1)
+
+
+def test_statistics_jacobian_accepts_one_ulp_below_an_upper_bound() raises:
+    var predecessor = bitcast[DType.float64](bitcast[DType.uint64](1.0) - UInt64(1))
+    var problem = LeastSquaresProblem(
+        UpperEdgeStatisticsModel(),
+        [predecessor],
+        bounds=Bounds([0.0], [1.0]),
+    )
+    var statistics = fit_statistics(problem, make_result([predecessor]))
+
+    assert_equal(statistics.degrees_of_freedom, 3)
+    assert_true(statistics.standard_error(0) > 0.0)
+
+
 def test_statistics_reject_invalid_storage() raises:
     with assert_raises(contains="fit statistics require at least one parameter; got 0"):
         _ = FitStatistics(
@@ -247,17 +318,17 @@ def test_statistics_reject_invalid_storage() raises:
             degrees_of_freedom=1,
             reduced_chi_squared=1.0,
         )
-    with assert_raises(contains="diagonal entry 0 must be positive"):
+    with assert_raises(contains="diagonal entry 0 must be non-negative"):
         _ = FitStatistics(
-            [0.0],
+            [-1.0],
             [1.0],
             degrees_of_freedom=1,
             reduced_chi_squared=1.0,
         )
-    with assert_raises(contains="standard error 0 must be finite and positive"):
+    with assert_raises(contains="standard error 0 must be finite and non-negative"):
         _ = FitStatistics(
             [1.0],
-            [0.0],
+            [-1.0],
             degrees_of_freedom=1,
             reduced_chi_squared=1.0,
         )

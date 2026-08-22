@@ -6,10 +6,12 @@ when every acceptance check in that section is green.
 
 ## Release contract
 
-Nerai v0.1 solves deterministic, unconstrained, dense nonlinear least-squares
-problems in `Float64` using Levenberg-Marquardt. It provides finite-difference
-Jacobians, observation weights, linear, Huber, and soft-L1 losses, covariance
-estimation for full-rank solutions, and explicit termination reports.
+Nerai v0.1 solves deterministic, dense nonlinear least-squares problems in
+`Float64` using Levenberg-Marquardt, with optional parameter-wise box bounds.
+It provides bound-aware forward and central finite-difference Jacobians,
+observation weights, explicit parameter scaling, linear, Huber, and soft-L1
+losses, covariance estimation for full-rank solutions, a `CurveFit` front door,
+and explicit termination reports.
 
 For parameters `x`, raw residuals `r_i(x)`, observation weights `w_i`, and loss
 scale `C`, the objective is
@@ -40,8 +42,11 @@ The contract has these consequences:
 - A user-supplied or finite-difference Jacobian describes the raw residual:
   `J[i, j] = d r_i / d x_j`. Weighting and robust-loss transformations belong
   to the solver, not to the callback.
-- Dense matrices are private row-major implementation values. Nerai does not
+- Dense matrices are private column-major implementation values. Nerai does not
   introduce a public universal array type.
+- Bounded solves require a strictly feasible initial point and keep accepted
+  and trial iterates strictly inside each finite endpoint. Equality and general
+  nonlinear constraints are not part of v0.1.
 
 Invalid problem configuration, a callback error, a changed residual length, or
 non-finite values at the initial point raise `Error`. A numerical breakdown
@@ -164,7 +169,7 @@ evaluation; coherent between-call mutation is explicit reconfiguration.
 
 **Depends on:** NERAI-002.
 
-**Outcome:** the minimum private row-major operations needed by LM, with no
+**Outcome:** the minimum private column-major operations needed by LM, with no
 public array abstraction.
 
 **Scope:** checked matrix shape/indexing; dot products and stable norms;
@@ -177,21 +182,23 @@ for the declared fixture range; `pixi run check` passes.
 
 **Status:** implemented in the current working tree.
 
-### NERAI-004 — Forward finite-difference Jacobian
+### NERAI-004 — Bound-aware finite-difference Jacobians
 
 **Depends on:** NERAI-002 and NERAI-003.
 
 **Outcome:** deterministic numerical Jacobians with exact evaluation accounting.
 
-**Scope:** forward differences of raw residuals; default
-`h_j = sqrt(epsilon) * max(1, abs(x_j))`; validated user relative step; a
-representable perturbation for every finite parameter; fixed residual shape.
+**Scope:** bound-aware forward and central differences of raw residuals; default
+`h_j = sqrt(epsilon) * max(1, abs(x_j))`; validated user relative step; signed
+inward one-sided stencils near finite bounds; a representable perturbation for
+every strictly feasible finite parameter; fixed residual shape.
 
 **Complete when:** constant, affine, quadratic, and coupled analytic fixtures
 meet their stated absolute/relative tolerances; constant columns are exactly
-zero; the callback count is `n + 1` when a base residual is not supplied and
-`n` when it is supplied; callback errors, non-finite outputs, and changed shape
-are tested; `pixi run check` passes.
+zero; excluding an optional base call, forward accounting is `n` and central
+accounting is `2n`, including second-order one-sided central stencils; callback
+errors, non-finite outputs, and changed shape are tested; `pixi run check`
+passes.
 
 **Status:** implemented in the current working tree.
 
@@ -222,8 +229,9 @@ fixed cases; `pixi run check` passes.
 owning iteration policy.
 
 **Scope:** solve `(J^T J + lambda D) step = -J^T f`; scale the diagonal with a
-documented positive floor; calculate predicted reduction; classify singular,
-non-finite, and non-descent proposals.
+documented positive floor; switch small-pivot systems to pivoted Householder QR
+on the augmented damped least-squares system; calculate predicted reduction;
+classify singular, non-finite, and non-descent proposals.
 
 **Complete when:** one-dimensional and linear multi-parameter fixtures match
 hand calculations; increasing damping monotonically reduces step norm for the
@@ -274,13 +282,17 @@ breakdown returns numerical failure; `pixi run check` passes.
 solution.
 
 **Scope:** inverse normal matrix; residual variance scaling with documented
-degrees of freedom; weighted/robust model Jacobian convention; explicit
-unavailable reason for rank deficiency or insufficient degrees of freedom.
+degrees of freedom; weighted/robust model Jacobian convention; explicit `Error`
+for rank deficiency or insufficient degrees of freedom.
 
 **Complete when:** linear-regression fixtures match independently calculated
 covariance values; output is symmetric within tolerance with non-negative
-diagonal; rank-deficient and `m <= n` cases report unavailable instead of
-inventing finite values; `pixi run check` passes.
+diagonal; rank-deficient and `m <= n` cases raise instead of inventing finite
+values; `pixi run check` passes.
+
+**Status:** implemented in the current working tree. Exact fits return zero
+covariance and standard errors; correlation then raises because normalization
+by a zero standard error is undefined.
 
 ### NERAI-010 — End-to-end numerical corpus
 
@@ -297,6 +309,9 @@ tolerance, and provenance; solutions meet the numerical gates below on all CI
 platforms; robust fixtures improve parameter error over linear loss for the
 committed contaminated dataset; `pixi run check` and `pixi run package` pass.
 
+**Status:** implemented in the current working tree, including bounded,
+ill-conditioned, deterministic, and exact-fit regression coverage.
+
 ### NERAI-011 — v0.1 usability and release audit
 
 **Depends on:** NERAI-010.
@@ -311,6 +326,10 @@ example; README commands work in a clean clone; benchmarks report environment,
 warmup, iterations, and metric without superiority claims; package smoke tests
 import and solve through only installed artifacts; no v0.2 symbol leaks through
 the root; release CI is green.
+
+**Status:** implemented in the current working tree. The reproducible benchmark
+also reports build and revision provenance and verifies scalar/SIMD kernel
+equivalence before timing.
 
 ## Numerical gates
 
@@ -335,7 +354,8 @@ external datasets record source, license, checksum, and generation command in
 
 ## v0.1 non-goals
 
-- bounds, equality constraints, and inequality constraints;
+- equality constraints and general nonlinear inequality constraints beyond the
+  implemented parameter-wise box bounds;
 - underdetermined systems and rank-deficient pseudoinverse solutions;
 - sparse Jacobians or sparse linear algebra;
 - automatic differentiation and symbolic Jacobians;

@@ -7,7 +7,7 @@ from nerai import (
     TerminationReason,
     least_squares,
 )
-from nerai._kernel import _DenseMatrix
+from nerai._kernel import _DenseMatrix, _jt_residual
 from nerai.solve import _increase_damping, _lm_step, _update_damping
 from std.math import abs, exp
 from std.testing import TestSuite, assert_equal, assert_raises, assert_true
@@ -167,6 +167,24 @@ struct ScaledDecayModel(Copyable, ResidualModel):
         return residuals^
 
 
+struct IllConditionedLinearModel(Copyable, ResidualModel):
+    def __init__(out self):
+        pass
+
+    def residual_count(self) -> Int:
+        return 16
+
+    def residuals(mut self, parameters: List[Float64]) raises -> List[Float64]:
+        var residuals = List[Float64](length=16, fill=0.0)
+        for row in range(16):
+            var x = (Float64(row) - 7.5) / 8.0
+            var first = 1.0
+            var second = 1.0 + 1.0e-4 * x
+            var target = 2.0 * first - second
+            residuals[row] = parameters[0] * first + parameters[1] * second - target
+        return residuals^
+
+
 def tight_options(
     *, loss: LossKind = LossKind.LINEAR, loss_scale: Float64 = 1.0
 ) raises -> LeastSquaresOptions:
@@ -190,8 +208,8 @@ def test_lm_step_matches_hand_fixture_and_damping_reduces_norm() raises:
     # (4+0.5*4)s=-8 gives s=-4/3. The quadratic prediction is 64/9.
     var jacobian = _DenseMatrix(1, 1)
     jacobian.set(0, 0, 2.0)
-    var low = _lm_step(jacobian, [8.0], 0.5)
-    var high = _lm_step(jacobian, [8.0], 2.0)
+    var low = _lm_step(jacobian, [4.0], [8.0], 0.5)
+    var high = _lm_step(jacobian, [4.0], [8.0], 2.0)
 
     assert_true(abs(low.step[0] + 4.0 / 3.0) <= 1.0e-12)
     assert_true(abs(low.predicted_reduction - 64.0 / 9.0) <= 1.0e-12)
@@ -203,10 +221,30 @@ def test_lm_step_matches_hand_fixture_and_damping_reduces_norm() raises:
     var two_parameter_jacobian = _DenseMatrix(2, 2)
     two_parameter_jacobian.set(0, 0, 1.0)
     two_parameter_jacobian.set(1, 1, 2.0)
-    var two_parameter = _lm_step(two_parameter_jacobian, [2.0, -8.0], 1.0)
+    var two_parameter = _lm_step(two_parameter_jacobian, [2.0, -4.0], [2.0, -8.0], 1.0)
     assert_true(abs(two_parameter.step[0] + 1.0) <= 1.0e-12)
     assert_true(abs(two_parameter.step[1] - 1.0) <= 1.0e-12)
     assert_true(abs(two_parameter.predicted_reduction - 7.5) <= 1.0e-12)
+
+
+def test_lm_qr_fallback_retains_nearly_collinear_direction() raises:
+    var epsilon = 1.0e-8
+    var jacobian = _DenseMatrix(4, 2)
+    for row in range(4):
+        jacobian.set(row, 0, 1.0)
+        jacobian.set(row, 1, 1.0 + Float64(row) * epsilon)
+    var residuals: List[Float64] = [
+        -1.0,
+        -1.0 + epsilon,
+        -1.0 + 2.0 * epsilon,
+        -1.0 + 3.0 * epsilon,
+    ]
+    var gradient = _jt_residual(jacobian, residuals)
+    var proposal = _lm_step(jacobian, residuals, gradient, 1.0e-20)
+
+    assert_true(abs(proposal.step[0] - 2.0) <= 3.0e-4)
+    assert_true(abs(proposal.step[1] + 1.0) <= 3.0e-4)
+    assert_true(proposal.predicted_reduction > 0.0)
 
 
 def test_damping_policy_matches_fixed_thresholds_and_bounds() raises:
@@ -253,6 +291,18 @@ def test_explicit_x_scale_handles_widely_separated_parameter_scales() raises:
 
     assert_true(abs(result.parameters[0] / 2.5e6 - 1.0) <= 1.0e-6)
     assert_true(abs(result.parameters[1] / 1.0e-3 - 1.0) <= 1.0e-6)
+
+
+def test_ill_conditioned_linear_fit_recovers_independent_parameters() raises:
+    var problem = LeastSquaresProblem(
+        IllConditionedLinearModel(), [0.0, 0.0], options=tight_options()
+    )
+    var result = least_squares(problem)
+
+    assert_true(result.converged())
+    assert_true(abs(result.parameters[0] - 2.0) <= 2.0e-5)
+    assert_true(abs(result.parameters[1] + 1.0) <= 2.0e-5)
+    assert_true(result.cost <= 1.0e-20)
 
 
 def test_robust_losses_reduce_one_outlier_parameter_error() raises:

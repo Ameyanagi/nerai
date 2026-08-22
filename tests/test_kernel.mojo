@@ -1,14 +1,19 @@
 from nerai._kernel import (
     _DenseMatrix,
+    _QrWorkspace,
     _add_diagonal_damping,
     _dot,
     _jt_j,
+    _jt_j_scalar,
     _jt_residual,
+    _jt_residual_scalar,
     _norm2,
     _norm_inf,
+    _solve_least_squares_qr,
+    _solve_damped_least_squares_qr,
     _solve_spd,
 )
-from std.math import abs
+from std.math import abs, sqrt
 from std.testing import TestSuite, assert_equal, assert_raises, assert_true
 from std.utils.numerics import inf
 
@@ -37,7 +42,7 @@ def matrix_from_values(
     return matrix^
 
 
-def test_matrix_access_is_checked_and_row_major() raises:
+def test_matrix_access_is_checked_and_layout_is_private() raises:
     var matrix = _DenseMatrix(2, 3)
     matrix.set(1, 2, 7.5)
     assert_equal(matrix.rows, 2)
@@ -79,6 +84,41 @@ def test_transpose_products_match_hand_computation() raises:
     assert_close(normal.get(1, 1), 56.0)
 
 
+def test_simd_transpose_product_matches_scalar_across_tails() raises:
+    for rows in [0, 1, 2, 3, 7, 64, 257]:
+        var jacobian = _DenseMatrix(rows, 5)
+        var residuals = List[Float64](length=rows, fill=0.0)
+        for row in range(rows):
+            residuals[row] = Float64((row * 29) % 31 - 15) / 17.0
+            for col in range(5):
+                jacobian.set(
+                    row,
+                    col,
+                    Float64((row * 13 + col * 19) % 37 - 18) / 11.0,
+                )
+        var scalar = _jt_residual_scalar(jacobian, residuals)
+        var simd = _jt_residual(jacobian, residuals)
+        for col in range(5):
+            assert_close(simd[col], scalar[col], 2.0e-12)
+
+
+def test_simd_normal_matrix_matches_scalar_across_tails() raises:
+    for rows in [0, 1, 2, 3, 7, 64, 257]:
+        var jacobian = _DenseMatrix(rows, 5)
+        for row in range(rows):
+            for col in range(5):
+                jacobian.set(
+                    row,
+                    col,
+                    Float64((row * 13 + col * 19) % 37 - 18) / 11.0,
+                )
+        var scalar = _jt_j_scalar(jacobian)
+        var simd = _jt_j(jacobian)
+        for row in range(5):
+            for col in range(5):
+                assert_close(simd.get(row, col), scalar.get(row, col), 2.0e-12)
+
+
 def test_diagonal_damping_fixture() raises:
     # [[4, 1], [1, 9]] + 0.5 * diag([2, 3]) = [[5, 1], [1, 10.5]].
     var matrix = matrix_from_values(2, 2, [4.0, 1.0, 1.0, 9.0])
@@ -116,6 +156,80 @@ def test_three_by_three_spd_solve() raises:
     assert_close(solution[0], 1.0)
     assert_close(solution[1], 2.0)
     assert_close(solution[2], 3.0)
+
+
+def test_qr_solve_preserves_nearly_collinear_information() raises:
+    var epsilon = 1.0e-8
+    var matrix = matrix_from_values(
+        4,
+        2,
+        [
+            1.0,
+            1.0,
+            1.0,
+            1.0 + epsilon,
+            1.0,
+            1.0 + 2.0 * epsilon,
+            1.0,
+            1.0 + 3.0 * epsilon,
+        ],
+    )
+    # b = 2*column_0 - column_1. Forming J^T J squares this fixture's
+    # condition number; Householder QR retains the independent direction.
+    var solution = _solve_least_squares_qr(
+        matrix,
+        [1.0, 1.0 - epsilon, 1.0 - 2.0 * epsilon, 1.0 - 3.0 * epsilon],
+    )
+    assert_close(solution[0], 2.0, 2.0e-7)
+    assert_close(solution[1], -1.0, 2.0e-7)
+
+
+def test_qr_householder_is_stable_under_extreme_finite_rescaling() raises:
+    for scale in [1.0e-310, 1.0e-200, 1.0e200]:
+        var matrix = matrix_from_values(
+            3,
+            2,
+            [scale, 0.0, 0.0, scale, scale, scale],
+        )
+        var solution = _solve_least_squares_qr(
+            matrix,
+            [2.0 * scale, -3.0 * scale, -scale],
+        )
+        assert_close(solution[0], 2.0, 2.0e-12)
+        assert_close(solution[1], -3.0, 2.0e-12)
+
+
+def test_qr_extreme_rescaling_still_rejects_rank_deficiency() raises:
+    for scale in [1.0e-310, 1.0e200]:
+        var matrix = matrix_from_values(
+            3,
+            2,
+            [scale, 2.0 * scale, 2.0 * scale, 4.0 * scale, 3.0 * scale, 6.0 * scale],
+        )
+        with assert_raises(contains="rank-deficient"):
+            _ = _solve_least_squares_qr(matrix, [scale, 2.0 * scale, 3.0 * scale])
+
+
+def test_damped_qr_avoids_unnecessary_squared_norm_overflow() raises:
+    var scale = 1.0e200
+    var jacobian = matrix_from_values(2, 1, [scale, scale])
+    var workspace = _QrWorkspace(3, 1)
+    var solution = _solve_damped_least_squares_qr(
+        workspace,
+        jacobian,
+        [-2.0 * scale, -2.0 * scale],
+        1.0e-200,
+    )
+    assert_close(solution[0], 2.0, 2.0e-12)
+
+    # The unscaled norm of two 1.3e308 entries overflows, while multiplying
+    # each scaled component by sqrt(damping) first yields a finite coefficient.
+    var extreme_scale = 1.3e308
+    var extreme = matrix_from_values(2, 1, [extreme_scale, extreme_scale])
+    var extreme_workspace = _QrWorkspace(3, 1)
+    extreme_workspace._load_damped(extreme, [0.0, 0.0], 1.0e-308)
+    var expected = (sqrt(1.0e-308) * extreme_scale) * sqrt(2.0)
+    assert_relative_close(extreme_workspace._matrix.get(2, 0), expected, 2.0e-15)
 
 
 def test_kernel_shape_mismatches_raise() raises:

@@ -15,9 +15,9 @@ install an application, renderer, language layer, or scientific stack.
 ## Layers
 
 Implemented areas are problem and result contracts, termination, robust losses,
-the private dense numerical kernel, forward finite-difference Jacobians, and the
-Levenberg-Marquardt solve loop. Covariance estimation and later BFGS/L-BFGS
-minimizers remain planned.
+the private dense numerical kernel, bound-aware forward and central
+finite-difference Jacobians, the Levenberg-Marquardt solve loop, and covariance
+estimation. General minimizers remain outside the repository boundary.
 
 The package root exports only the small documented public surface. Algorithms,
 generated tables, platform details, and backend implementations remain in
@@ -58,6 +58,9 @@ and enforces it for the entire solve, even if the public problem was reconfigure
 between standalone calls.
 
 The problem uses Mojo `List[Float64]` values and does not create a public matrix
-or array abstraction. `least_squares()` builds its row-major Jacobian, weighted
-robust objective, and LM state with private implementation values, then returns
-only the documented `LeastSquaresResult`.
+or array abstraction. `least_squares()` builds a private column-major Jacobian
+so finite-difference columns, transpose products, and QR scans remain
+contiguous. Normal equations retain the common fast path; a small Cholesky
+pivot switches to a reusable pivoted Householder-QR workspace over the augmented
+damped system. This stability choice does not add a public solver-mode option.
+Only the documented `LeastSquaresResult` crosses the package boundary.

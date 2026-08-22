@@ -112,13 +112,19 @@ The task-focused examples are
 [`gaussian_peak.mojo`](examples/gaussian_peak.mojo), and
 [`bounded_decay.mojo`](examples/bounded_decay.mojo). The last one uses the raw
 problem API to contrast an unbounded fit with a physically bounded fit.
+[`ill_conditioned.mojo`](examples/ill_conditioned.mojo) demonstrates two
+strongly correlated columns handled without adding a linear-solver option to
+the public API.
 
 ## Scope
 
 Nerai provides dense `Float64` nonlinear least squares with forward or central
-finite-difference Jacobians, observation weights, linear and robust losses,
-parameter scaling, box bounds, explicit termination reports, and post-fit
-covariance estimates. `CurveFit` is the data-fitting front door;
+bound-aware finite-difference Jacobians, observation weights, linear and robust
+losses, parameter scaling, box bounds, adaptive QR stabilization, explicit
+termination reports, and post-fit covariance estimates. Full-rank exact fits
+with positive degrees of freedom report zero covariance and zero standard
+errors rather than failing validation; correlation is then undefined and
+`FitStatistics.correlation()` raises. `CurveFit` is the data-fitting front door;
 `LeastSquaresProblem` and `least_squares()` remain the expert residual-model
 API. See the [issue-sized v0.1 implementation plan](docs/implementation-plan.md).
 
@@ -132,12 +138,13 @@ gradient.
 An initial guess on or outside a bound is nudged strictly inside, following
 SciPy.
 
-Covariance is `(J^T W J)^-1 * reduced_chi_squared`, with degrees of freedom
-`m_effective - n`; this follows SciPy `curve_fit(..., absolute_sigma=False)`
-semantics. Weights multiply residuals once. On the `CurveFit` front door,
-`sigma` maps to `w_i = 1 / sigma_i` with `absolute_sigma=False` covariance
-semantics. Supplying `sigma` with `absolute_sigma=True` skips the
-reduced-chi-squared rescaling, matching SciPy.
+Covariance is `(J_model^T J_model)^-1 * reduced_chi_squared`, with degrees of
+freedom `m_effective - n`; this follows SciPy
+`curve_fit(..., absolute_sigma=False)` semantics. For linear loss,
+`J_model = diag(w_i) J_raw`, so the normal matrix contains `w_i^2`. On the
+`CurveFit` front door, `sigma` maps to `w_i = 1 / sigma_i`. Supplying `sigma`
+with `absolute_sigma=True` skips the reduced-chi-squared rescaling, matching
+SciPy's known-measurement-uncertainty convention.
 
 ## Development
 
@@ -146,6 +153,7 @@ From a source checkout, run:
 ```sh
 pixi run check
 pixi run example
+pixi run bench
 ```
 
 The exact stable Mojo compiler and all development dependencies are captured in
@@ -169,7 +177,7 @@ first release.
 - `src/nerai/`: library or application source
 - `tests/`: TestSuite unit, reference-value, and invariant tests
 - `examples/`: small compilable usage programs
-- `benchmarks/`: reproducible methodology and later benchmark programs
+- `benchmarks/`: reproducible methodology, profiler evidence, and benchmarks
 - `docs/`: architecture, design, compatibility, roadmap, and release policy
 - `conda.recipe/`: local Rattler build recipe
 

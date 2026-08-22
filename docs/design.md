@@ -21,11 +21,12 @@ contracts and sparse dependencies. Generated tables are acceptable when their
 sources, Unicode or data version, licenses, checksums, and deterministic update
 procedure are committed. Consumers must not need the generator toolchain.
 
-For v0.1, Nerai chooses dense unconstrained `Float64` least squares and a small
-private numerical kernel. This keeps callback, loss, termination, and numerical
-failure semantics reviewable before considering an external linear-algebra
-dependency or a broader optimizer family. Exact equations and acceptance gates
-live in the [implementation plan](implementation-plan.md).
+For v0.1, Nerai chooses dense `Float64` least squares, optional parameter-wise
+box bounds, and a small private numerical kernel. This keeps callback, loss,
+termination, constraint, and numerical-failure semantics reviewable before
+considering an external linear-algebra dependency or a broader optimizer
+family. Exact equations and acceptance gates live in the
+[implementation plan](implementation-plan.md).
 
 Robust costs use loss-specific scaled formulas. Linear and inlier Huber costs
 halve before squaring; Huber outliers use `C * (abs(r) - C / 2)`; soft-L1 uses
@@ -36,9 +37,12 @@ scale square.
 The implemented `least_squares()` surface validates reachable problem state
 once at solve entry, then evaluates the trusted model directly inside the loop
 while enforcing the captured residual dimension and finite outputs. It builds
-forward-difference Jacobians and the weighted robust objective, applies the LM
+bound-aware forward or central finite-difference Jacobians and the weighted
+robust objective, applies optional explicit parameter scaling and the LM
 damping policy fixed in the implementation plan, and maps tolerance, budget,
-and numerical-breakdown outcomes to `TerminationReason`.
+and numerical-breakdown outcomes to `TerminationReason`. The usual normal-
+equation path is backed by a pivoted, scaled Householder-QR fallback without a
+public linear-solver switch.
 
 ## Mojo 1.0 mutation and invariants
 

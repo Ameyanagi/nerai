@@ -69,6 +69,23 @@ def _build_objective_model(
     loss: LossKind,
     scale: Float64,
 ) raises -> _ObjectiveModel:
+    """Build an objective while preserving a caller-owned raw Jacobian."""
+    return _build_objective_model_owned(
+        raw_residuals,
+        raw_jacobian.copy(),
+        weights,
+        loss,
+        scale,
+    )
+
+
+def _build_objective_model_owned(
+    raw_residuals: List[Float64],
+    var raw_jacobian: _DenseMatrix,
+    weights: List[Float64],
+    loss: LossKind,
+    scale: Float64,
+) raises -> _ObjectiveModel:
     """Build ``F``, robustified ``f`` and ``J``, and ``J^T f``.
 
     A row first becomes ``u_i = w_i r_i``. The model then uses
@@ -84,9 +101,9 @@ def _build_objective_model(
 
     var cost = _objective_cost(raw_residuals, weights, loss, scale)
     var model_residuals = List[Float64](length=len(raw_residuals), fill=0.0)
-    var model_jacobian = _DenseMatrix(raw_jacobian.rows, raw_jacobian.cols)
+    var model_jacobian = raw_jacobian^
 
-    for row in range(raw_jacobian.rows):
+    for row in range(model_jacobian.rows):
         var weight = weights[row]
         var weighted_residual = weight * raw_residuals[row]
         var first_derivative = _loss_first_derivative(loss, weighted_residual, scale)
@@ -106,14 +123,15 @@ def _build_objective_model(
         var jacobian_scale = robust_scale * weight
         if not isfinite(jacobian_scale):
             raise Error("robust Jacobian scale is not finite")
-        for col in range(raw_jacobian.cols):
-            var raw_value = raw_jacobian._values[row * raw_jacobian.cols + col]
+        for col in range(model_jacobian.cols):
+            var offset = model_jacobian._offset(row, col)
+            var raw_value = model_jacobian._values[offset]
             if not isfinite(raw_value):
                 raise Error("raw Jacobian values must be finite")
             var model_value = jacobian_scale * raw_value
             if not isfinite(model_value):
                 raise Error("robust model Jacobian is not finite")
-            model_jacobian._values[row * raw_jacobian.cols + col] = model_value
+            model_jacobian._values[offset] = model_value
 
     var gradient = _jt_residual(model_jacobian, model_residuals)
     for col in range(len(gradient)):

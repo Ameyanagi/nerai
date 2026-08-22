@@ -10,13 +10,19 @@ from ._jacobian import (
 )
 from ._kernel import (
     _DenseMatrix,
+    _QrWorkspace,
     _add_diagonal_damping,
     _dot,
     _jt_j,
     _norm2,
     _solve_spd,
+    _solve_damped_least_squares_qr,
 )
-from ._objective import _ObjectiveModel, _build_objective_model, _objective_cost
+from ._objective import (
+    _ObjectiveModel,
+    _build_objective_model_owned,
+    _objective_cost,
+)
 from .bounds import Bounds
 from .options import JacobianScheme
 from .problem import LeastSquaresProblem, ResidualModel
@@ -121,13 +127,14 @@ def least_squares[
         residual_evaluations,
         problem.options.jacobian_scheme,
         relative_step=relative_step,
+        bounds=problem.bounds,
     )
     jacobian_evaluations += 1
     var objective: _ObjectiveModel
     try:
-        objective = _build_objective_model(
+        objective = _build_objective_model_owned(
             raw_residuals,
-            raw_jacobian,
+            raw_jacobian^,
             problem.weights,
             problem.options.loss,
             problem.options.loss_scale,
@@ -172,6 +179,9 @@ def least_squares[
         )
 
     var damping = problem.options.initial_damping
+    var qr_workspace = _QrWorkspace(
+        expected_residual_count + parameter_count, parameter_count
+    )
     while True:
         # Reserve one trial call and, if accepted, every finite-difference
         # column needed to make the new accepted state reportable.
@@ -194,6 +204,7 @@ def least_squares[
         var proposal: _LmProposal
         try:
             proposal = _scaled_lm_step(
+                qr_workspace,
                 objective,
                 problem.options.x_scale,
                 parameters,
@@ -418,12 +429,13 @@ def least_squares[
             residual_evaluations,
             problem.options.jacobian_scheme,
             relative_step=relative_step,
+            bounds=problem.bounds,
         )
         jacobian_evaluations += 1
         try:
-            objective = _build_objective_model(
+            objective = _build_objective_model_owned(
                 raw_residuals,
-                raw_jacobian,
+                raw_jacobian^,
                 problem.weights,
                 problem.options.loss,
                 problem.options.loss_scale,
@@ -567,6 +579,7 @@ def _numerical_jacobian[
     scheme: JacobianScheme,
     *,
     relative_step: Float64,
+    bounds: Optional[Bounds],
 ) raises -> _DenseMatrix:
     """Dispatch one numerical Jacobian without changing callback accounting."""
     if scheme == JacobianScheme.CENTRAL:
@@ -576,6 +589,7 @@ def _numerical_jacobian[
             base_residuals,
             evaluations,
             relative_step=relative_step,
+            bounds=bounds,
         )
     return _forward_difference_jacobian(
         model,
@@ -583,10 +597,12 @@ def _numerical_jacobian[
         base_residuals,
         evaluations,
         relative_step=relative_step,
+        bounds=bounds,
     )
 
 
 def _scaled_lm_step(
+    mut qr_workspace: _QrWorkspace,
     objective: _ObjectiveModel,
     x_scale: Optional[List[Float64]],
     parameters: List[Float64],
@@ -596,15 +612,21 @@ def _scaled_lm_step(
 ) raises -> _LmProposal:
     """Solve in ``z = x / d`` when an explicit parameter scale is present."""
     if not x_scale and not bounds:
-        return _lm_step(objective.jacobian, objective.gradient, damping)
+        return _lm_step_with_workspace(
+            qr_workspace,
+            objective.jacobian,
+            objective.residuals,
+            objective.gradient,
+            damping,
+        )
 
     var model_jacobian = objective.jacobian.copy()
     var model_gradient = objective.gradient.copy()
     if x_scale:
         var scale = x_scale.value().copy()
-        for row in range(model_jacobian.rows):
-            for col in range(model_jacobian.cols):
-                var offset = row * model_jacobian.cols + col
+        for col in range(model_jacobian.cols):
+            for row in range(model_jacobian.rows):
+                var offset = model_jacobian._offset(row, col)
                 model_jacobian._values[offset] *= scale[col]
         for col in range(len(model_gradient)):
             model_gradient[col] *= scale[col]
@@ -635,9 +657,15 @@ def _scaled_lm_step(
                     continue
                 model_gradient[col] = 0.0
                 for row in range(model_jacobian.rows):
-                    model_jacobian._values[row * model_jacobian.cols + col] = 0.0
+                    model_jacobian._values[model_jacobian._offset(row, col)] = 0.0
 
-    var proposal = _lm_step(model_jacobian, model_gradient, damping)
+    var proposal = _lm_step_with_workspace(
+        qr_workspace,
+        model_jacobian,
+        objective.residuals,
+        model_gradient,
+        damping,
+    )
     if x_scale:
         var scale = x_scale.value().copy()
         for col in range(len(proposal.step)):
@@ -729,7 +757,22 @@ def _scaled_predicted_reduction(proposal: _LmProposal, alpha: Float64) -> Float6
 
 
 def _lm_step(
-    jacobian: _DenseMatrix, gradient: List[Float64], damping: Float64
+    jacobian: _DenseMatrix,
+    residuals: List[Float64],
+    gradient: List[Float64],
+    damping: Float64,
+) raises -> _LmProposal:
+    """Allocate one QR fallback workspace for a standalone private LM step."""
+    var workspace = _QrWorkspace(jacobian.rows + jacobian.cols, jacobian.cols)
+    return _lm_step_with_workspace(workspace, jacobian, residuals, gradient, damping)
+
+
+def _lm_step_with_workspace(
+    mut qr_workspace: _QrWorkspace,
+    jacobian: _DenseMatrix,
+    residuals: List[Float64],
+    gradient: List[Float64],
+    damping: Float64,
 ) raises -> _LmProposal:
     """Solve the diagonally scaled LM system and predict model reduction.
 
@@ -739,13 +782,15 @@ def _lm_step(
     """
     if len(gradient) != jacobian.cols:
         raise Error("LM gradient length must match the Jacobian columns")
+    if len(residuals) != jacobian.rows:
+        raise Error("LM residual length must match the Jacobian rows")
     if not isfinite(damping) or damping <= 0.0:
         raise Error("LM damping must be finite and positive")
 
     var normal = _jt_j(jacobian)
     var diagonal = List[Float64](length=normal.rows, fill=0.0)
     for index in range(normal.rows):
-        var value = normal._values[index * normal.cols + index]
+        var value = normal._values[normal._offset(index, index)]
         if not isfinite(value):
             raise Error("LM normal matrix is not finite")
         diagonal[index] = max(value, 1.0e-15)
@@ -758,7 +803,20 @@ def _lm_step(
             raise Error("LM gradient is not finite")
         right_hand_side[index] = -gradient[index]
 
-    var step = _solve_spd(damped_normal, right_hand_side)
+    var step: List[Float64]
+    try:
+        # Damping normally makes the normal system safe and this is the fast
+        # path. A small Cholesky pivot triggers the stable augmented QR path
+        # before squared conditioning can corrupt the step.
+        step = _solve_spd(
+            damped_normal,
+            right_hand_side,
+            minimum_relative_pivot=1.0e-10,
+        )
+    except:
+        step = _solve_damped_least_squares_qr(
+            qr_workspace, jacobian, residuals, damping
+        )
     for index in range(len(step)):
         if not isfinite(step[index]):
             raise Error("LM step is not finite")
@@ -783,7 +841,7 @@ def _quadratic_form(matrix: _DenseMatrix, values: List[Float64]) raises -> Float
     for row in range(matrix.rows):
         var row_product = 0.0
         for col in range(matrix.cols):
-            row_product += matrix._values[row * matrix.cols + col] * values[col]
+            row_product += matrix._values[matrix._offset(row, col)] * values[col]
         result += values[row] * row_product
     if not isfinite(result):
         raise Error("quadratic form is not finite")

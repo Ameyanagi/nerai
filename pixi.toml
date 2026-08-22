@@ -6,8 +6,10 @@ platforms = ["osx-arm64", "linux-64", "linux-aarch64"]
 version = "0.0.0"
 
 [tasks]
+bench = { cmd = "bash scripts/benchmark-least-squares.sh", description = "Run compiled least-squares latency benchmarks" }
 check = { depends-on = ["format-check", "readme-check", "test", "precompile"], description = "Run the complete validation suite" }
 example = { cmd = "mojo run -I src examples/basic.mojo", description = "Run the raw least-squares example" }
+example-conditioning = { cmd = "mojo run -I src examples/ill_conditioned.mojo", description = "Run the ill-conditioned least-squares example" }
 format = { cmd = "bash scripts/format.sh", description = "Format Mojo source files" }
 format-check = { cmd = "bash scripts/check-format.sh", description = "Verify Mojo formatting without modifying source" }
 package = { cmd = "rattler-build build --recipe conda.recipe/recipe.yaml -c conda-forge -c https://conda.modular.com/max -c https://repo.prefix.dev/modular-community", description = "Build the local Conda package" }
