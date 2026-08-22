@@ -26,6 +26,7 @@ jobs:
           [[ "$GITHUB_REF" == "refs/tags/v${workspace_version}" ]]
           [[ "$(git cat-file -t "$GITHUB_REF")" == "tag" ]]
           [[ "$(git rev-parse "${GITHUB_REF}^{commit}")" == "$GITHUB_SHA" ]]
+          git merge-base --is-ancestor "$GITHUB_SHA" refs/remotes/origin/main
           [[ "$(sed -n 's/^mojo = "\([^"]*\)"$/\1/p' pixi.toml)" == "==1.0.0" ]]
           [[ "$(grep -c '^    - mojo-compiler =1.0.0$' conda.recipe/recipe.yaml)" -eq 3 ]]
           grep -Fq "## [${workspace_version}] - " CHANGELOG.md
