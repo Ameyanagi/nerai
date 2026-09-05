@@ -259,6 +259,44 @@ def test_rank_deficient_jacobian_has_a_specific_error() raises:
         _ = fit_statistics(problem, result)
 
 
+def test_covariance_rejects_each_coordinate_before_flattening() raises:
+    var statistics = FitStatistics(
+        [1.0, 0.25, 0.25, 4.0],
+        [1.0, 2.0],
+        degrees_of_freedom=1,
+        reduced_chi_squared=1.0,
+    )
+    # This first invalid coordinate used to alias (1, 0) inside the flat list.
+    with assert_raises(contains="covariance column must be within [0, 2); got 2"):
+        _ = statistics.covariance(0, 2)
+    var invalid: List[Int] = [-1, 2, 9223372036854775807, -9223372036854775808]
+    for index in invalid:
+        with assert_raises(
+            contains=String("covariance row must be within [0, 2); got ", index)
+        ):
+            _ = statistics.covariance(index, 0)
+        with assert_raises(
+            contains=String("covariance column must be within [0, 2); got ", index)
+        ):
+            _ = statistics.covariance(1, index)
+        with assert_raises(
+            contains=String("covariance row must be within [0, 2); got ", index)
+        ):
+            _ = statistics.correlation(index, 0)
+        with assert_raises(
+            contains=String("covariance column must be within [0, 2); got ", index)
+        ):
+            _ = statistics.correlation(1, index)
+    assert_equal(statistics.covariance(0, 0), 1.0)
+    assert_equal(statistics.covariance(0, 1), 0.25)
+    assert_equal(statistics.covariance(1, 0), 0.25)
+    assert_equal(statistics.covariance(1, 1), 4.0)
+    assert_equal(statistics.correlation(0, 0), 1.0)
+    assert_equal(statistics.correlation(0, 1), 0.125)
+    assert_equal(statistics.correlation(1, 0), 0.125)
+    assert_equal(statistics.correlation(1, 1), 1.0)
+
+
 def test_exact_fit_has_zero_covariance_and_standard_error() raises:
     var problem = LeastSquaresProblem(ExactFitStatisticsModel(), [1.0])
     var result = make_result([2.0])

@@ -90,6 +90,16 @@ with the problem or caller. The returned list is owned by the caller. Callback
 `Error` values propagate; Nerai does not translate a model domain error into
 solver convergence or numerical failure.
 
+## Statistics index contract
+
+`FitStatistics` validates stored covariance and uncertainty values at
+construction and trusts them afterward; `validate()` is the explicit checkpoint
+for unusual direct mutations of underscore-prefixed fields. `covariance(row,
+column)` is a raising accessor because coordinates are new caller input. It
+checks each index in `[0, parameter_count())` before any multiplication or list
+access. `correlation(row, column)` uses the same checks before reading standard
+errors. Valid accesses remain O(1) and do not revalidate stored statistics.
+
 ## Out of scope
 
 Interpolation, plotting, domain-specific models, automatic differentiation, global optimization, and a broad minimizer catalog are outside v0.1.
