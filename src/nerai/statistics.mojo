@@ -132,9 +132,24 @@ struct FitStatistics(Copyable, Equatable, Writable):
                 )
             )
 
-    def covariance(self, row: Int, column: Int) -> Float64:
-        """Return one trusted row-major covariance entry."""
-        return self._covariance[row * self.parameter_count() + column]
+    def covariance(self, row: Int, column: Int) raises -> Float64:
+        """Return one entry after checking each caller-supplied coordinate.
+
+        Raises if either index is outside `[0, parameter_count())`. Stored
+        statistics remain trusted; this O(1) check validates only new input.
+        """
+        var count = self.parameter_count()
+        if row < 0 or row >= count:
+            raise Error(
+                String("covariance row must be within [0, ", count, "); got ", row)
+            )
+        if column < 0 or column >= count:
+            raise Error(
+                String(
+                    "covariance column must be within [0, ", count, "); got ", column
+                )
+            )
+        return self._covariance[row * count + column]
 
     def standard_error(self, index: Int) -> Float64:
         """Return one trusted parameter standard error."""
@@ -142,6 +157,8 @@ struct FitStatistics(Copyable, Equatable, Writable):
 
     def correlation(self, row: Int, column: Int) raises -> Float64:
         """Return covariance normalized by two nonzero standard errors."""
+        # Validate coordinates before indexing either standard-error vector.
+        var covariance = self.covariance(row, column)
         var row_error = self.standard_error(row)
         var column_error = self.standard_error(column)
         if row_error == 0.0 or column_error == 0.0:
@@ -155,7 +172,7 @@ struct FitStatistics(Copyable, Equatable, Writable):
                 "correlation is not representable because the standard-error "
                 "product underflows"
             )
-        var result = self.covariance(row, column) / denominator
+        var result = covariance / denominator
         if not isfinite(result):
             raise Error("correlation is not finite")
         return result
